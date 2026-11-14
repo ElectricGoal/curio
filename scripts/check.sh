@@ -1,8 +1,6 @@
 #!/bin/bash
 # Verifies the app, its engine and the bundle.
-#   bash scripts/check.sh          Swift tests, release build, signature, self-test;
-#                                  plus the command-line tool's tests when its
-#                                  Python environment is set up (scripts/setup.sh)
+#   bash scripts/check.sh          Swift tests, release build, signature, self-test
 #   bash scripts/check.sh --e2e    also drives the app end to end with the real
 #                                  default model and checks search discriminates
 set -euo pipefail
@@ -24,15 +22,5 @@ if ls models/coreml/*/model.json >/dev/null 2>&1; then
   dist/ImageSearch.app/Contents/MacOS/ImageSearch --self-test
 else
   echo 'Skipping the app self-test: no models yet (bash scripts/convert-models.sh).'
-fi
-
-# The command-line tool is separate from the app and still Python.
-if [[ -x .venv/bin/python ]]; then
-  .venv/bin/python -m pytest -q
-  if [[ "${1:-}" == "--e2e" ]]; then
-    IMGSEARCH_REAL_MODEL=1 .venv/bin/python -m pytest -q tests/test_real_model.py
-  fi
-else
-  echo 'Skipping the command-line tool tests: no .venv (bash scripts/setup.sh).'
 fi
 echo 'App, engine and bundle verified.'

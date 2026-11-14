@@ -1,7 +1,7 @@
 # Builds the self-contained disk image and attaches it to a GitHub release
 # whenever a version tag is pushed:
 #
-#   git tag v0.3.0 && git push origin v0.3.0
+#   git tag v0.0.1 && git push origin v0.0.1
 #
 # Without the signing secrets below the image is ad-hoc signed, and macOS asks
 # users to confirm before opening it (see "Download" in the README).

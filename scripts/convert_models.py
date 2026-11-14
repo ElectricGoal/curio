@@ -1,7 +1,7 @@
 """Convert the app's models from PyTorch to Core ML.
 
 The app's engine is Swift and runs Core ML models; this is the one place
-Python is still needed, and only at build time. Run it through
+Python is needed, and only at build time. Run it through
 scripts/convert-models.sh, which supplies an isolated environment.
 
 For each model this writes models/coreml/<alias>/ containing:
@@ -32,9 +32,9 @@ from pathlib import Path
 
 warnings.filterwarnings("ignore")
 
-import coremltools as ct  # noqa: E402
-import numpy as np  # noqa: E402
-import torch  # noqa: E402
+import coremltools as ct
+import numpy as np
+import torch
 
 CONTEXT_LENGTH = 77
 START_TOKEN, END_TOKEN = 49406, 49407

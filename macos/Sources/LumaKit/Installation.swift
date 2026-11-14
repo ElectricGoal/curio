@@ -9,6 +9,8 @@ public struct Installation: Equatable, Sendable {
   public enum Kind: Equatable, Sendable { case installed, checkout }
 
   public static let dataFolderName = "ImageSearch"
+  /// A file that only exists at the root of this project's source tree.
+  static let sourceTreeMarker = "macos/Package.swift"
 
   public let kind: Kind
   /// Must be writable.
@@ -46,7 +48,7 @@ public struct Installation: Equatable, Sendable {
     }
     var candidate = bundle
     for _ in 0..<8 {
-      if fileExists(candidate.appendingPathComponent("pyproject.toml").path) {
+      if fileExists(candidate.appendingPathComponent(sourceTreeMarker).path) {
         return .checkout(candidate)
       }
       candidate.deleteLastPathComponent()

@@ -43,7 +43,7 @@ final class InstallationTests: XCTestCase {
   func testUnlinkedBuildFindsTheSourceTreeAboveIt() {
     let installation = resolve(
       bundle: "/Users/dev/repo/macos/.build/debug/ImageSearch",
-      existing: ["/Users/dev/repo/pyproject.toml"])
+      existing: ["/Users/dev/repo/macos/Package.swift"])
     XCTAssertEqual(installation, .checkout(URL(fileURLWithPath: "/Users/dev/repo")))
   }
 }

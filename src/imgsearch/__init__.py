@@ -1,4 +1,4 @@
-"""imgsearch — semantic image search CLI for macOS, accelerated by MLX."""
+"""imgsearch — semantic image search CLI for macOS, accelerated by the Apple GPU."""
 
 from __future__ import annotations
 

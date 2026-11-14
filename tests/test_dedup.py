@@ -188,3 +188,55 @@ def test_build_groups_merges_exact_and_near(tmp_path: Path) -> None:
     groups = build_groups(tmp_path, exact, near, strategy="largest")
     assert len(groups) == 1
     assert set(groups[0].all_paths) == {"a.png", "b.png", "c.png"}
+
+
+def test_find_near_groups_blockwise_matches_small_blocks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Results must not depend on how many rows are compared per block."""
+    from imgsearch.core import duplicate_finder
+
+    rng = np.random.default_rng(7)
+    base = rng.standard_normal((5, 8)).astype(np.float32)
+    vecs = np.concatenate([base, base[:3] + 1e-4]).astype(np.float32)
+    vecs /= np.linalg.norm(vecs, axis=1, keepdims=True)
+    rows = [{"faiss_id": i + 1, "rel_path": f"img{i}.jpg", "sha1": f"h{i}"} for i in range(8)]
+
+    def groups() -> list[list[str]]:
+        directory = tmp_path / f"run{len(list(tmp_path.iterdir()))}"
+        directory.mkdir()
+        meta = _make_meta(directory, rows)
+        vs = _make_vec_store(directory, vecs, list(range(1, 9)))
+        found = sorted(sorted(g) for g, _ in find_near_groups(vs, meta, threshold=0.999))
+        meta.close()
+        return found
+
+    expected = [["img0.jpg", "img5.jpg"], ["img1.jpg", "img6.jpg"], ["img2.jpg", "img7.jpg"]]
+    assert groups() == expected
+    monkeypatch.setattr(duplicate_finder, "_BLOCK_CELLS", 8)  # one row per block
+    assert groups() == expected
+
+
+@pytest.mark.parametrize(
+    "copy_name",
+    ["copy of beach.jpg", "beach copy.jpg", "beach copy 2.jpg", "beach (1).jpg", "Beach Copy.jpg"],
+)
+def test_pick_keeper_prefers_the_original_when_files_tie(tmp_path: Path, copy_name: str) -> None:
+    """Identical files tie on size; the one that looks like a copy should go."""
+    for name in (copy_name, "beach.jpg"):
+        (tmp_path / name).write_bytes(b"same bytes")
+    for order in ([copy_name, "beach.jpg"], ["beach.jpg", copy_name]):
+        assert pick_keeper(order, tmp_path, "largest") == "beach.jpg"
+
+
+def test_pick_keeper_tie_falls_back_to_the_shorter_path(tmp_path: Path) -> None:
+    (tmp_path / "exports").mkdir()
+    for name in ("exports/IMG_0001.jpg", "IMG_0001.jpg"):
+        (tmp_path / name).write_bytes(b"same bytes")
+    assert pick_keeper(["exports/IMG_0001.jpg", "IMG_0001.jpg"], tmp_path, "largest") == "IMG_0001.jpg"
+
+
+def test_pick_keeper_size_still_wins_over_name(tmp_path: Path) -> None:
+    (tmp_path / "beach copy.jpg").write_bytes(b"x" * 100)
+    (tmp_path / "beach.jpg").write_bytes(b"x" * 10)
+    assert pick_keeper(["beach.jpg", "beach copy.jpg"], tmp_path, "largest") == "beach copy.jpg"

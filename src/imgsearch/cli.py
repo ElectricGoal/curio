@@ -26,7 +26,7 @@ from imgsearch.commands import status as status_cmd
 
 app = typer.Typer(
     name="imgsearch",
-    help="Semantic image search for macOS — MLX-accelerated.",
+    help="Semantic image search for macOS, accelerated by the Apple GPU.",
     no_args_is_help=True,
     add_completion=True,
 )

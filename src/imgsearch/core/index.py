@@ -105,14 +105,14 @@ class Index:
         before FAISS write)."""
         meta_ids = set(self._meta.all_ids())
         vec_ids = set(self._vectors.all_ids())
-        if not meta_ids:
-            return
+        # Recover both directions: stale vectors otherwise consume top-k slots.
+        orphan_vectors = vec_ids - meta_ids
+        if orphan_vectors:
+            self._vectors.remove(list(orphan_vectors))
         orphans = meta_ids - vec_ids
-        if not orphans:
-            return
-        # Drop orphan metadata rows — they'll be re-embedded on next index.
-        with self._meta.transaction() as conn:
-            self._meta.delete_by_ids(conn, orphans)
+        if orphans:
+            with self._meta.transaction() as conn:
+                self._meta.delete_by_ids(conn, orphans)
 
     # ----- planning -----
 
@@ -187,6 +187,9 @@ class Index:
         assert len(sha1s) == len(files)
         assert len(dims) == len(files)
 
+        replaced_ids = [
+            row.faiss_id for f in files if (row := self._meta.get_by_path(f.rel_path)) is not None
+        ]
         ids = self._meta.allocate_ids(len(files))
         now = time.time()
 
@@ -205,6 +208,7 @@ class Index:
                     indexed_at=now,
                 )
 
+        self._vectors.remove(replaced_ids)
         self._vectors.add(np.asarray(ids, dtype=np.int64), vectors)
 
     def commit(self) -> None:
@@ -232,6 +236,16 @@ class Index:
                 continue  # orphan — reconciliation will clean up on next open
             hits.append(SearchHit(rel_path=rel, similarity=float(sim)))
         return hits
+
+    @property
+    def meta(self) -> MetaStore:
+        """The open metadata store (read access for duplicate detection)."""
+        return self._meta
+
+    @property
+    def vectors(self) -> VectorStore:
+        """The open vector store (read access for duplicate detection)."""
+        return self._vectors
 
     @property
     def manifest(self) -> Manifest:

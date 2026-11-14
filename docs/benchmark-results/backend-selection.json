@@ -1,0 +1,41 @@
+{
+  "selected_candidate": "python_mps_faiss",
+  "criteria": {
+    "minimum_embedding_cosine": 0.99999,
+    "minimum_top1_agreement": 1.0,
+    "minimum_top10_overlap": 0.99
+  },
+  "candidates": [
+    {
+      "backend": "python_mps_faiss",
+      "eligible": true,
+      "warm_workload_seconds": 7.846096875029616,
+      "reason": "Reference implementation, batch size 8"
+    },
+    {
+      "backend": "swift_coreml_float16",
+      "eligible": false,
+      "warm_workload_seconds": 3.58872383472044,
+      "reason": "Rejected: retrieval or embedding compatibility regression"
+    },
+    {
+      "backend": "rust_coreml_float16",
+      "eligible": false,
+      "warm_workload_seconds": 3.5979004120000004,
+      "reason": "Rejected: retrieval or embedding compatibility regression"
+    },
+    {
+      "backend": "swift_coreml_float32",
+      "eligible": true,
+      "warm_workload_seconds": 8.560658542322926,
+      "reason": "Passed retrieval compatibility gates"
+    },
+    {
+      "backend": "rust_coreml_float32",
+      "eligible": true,
+      "warm_workload_seconds": 8.705691625,
+      "reason": "Passed retrieval compatibility gates"
+    }
+  ],
+  "scope": "Selection by warm inference workload among accuracy-compatible candidates. Production integration requires separate end-to-end validation; this script does not change the app backend."
+}

@@ -1,0 +1,139 @@
+{
+  "scope": "Component measurements, not whole backend inference. All use the same Python-produced MobileCLIP vectors.",
+  "input": "/Volumes/ESSD/workspace/my_projects/pinterest_similarity_search/python_scripts/python_scripts/output/images",
+  "count": 201,
+  "dim": 768,
+  "query_count": 6,
+  "repeats_per_search_sample": 200,
+  "correctness": "exact file metadata/hashes and top10 IDs; scores within 2e-5",
+  "samples": {
+    "python": [
+      {
+        "scan_seconds": 0.0024400000693276525,
+        "hash_seconds": 0.014252500026486814,
+        "search_batch_seconds": 5.2592294523492455e-05
+      },
+      {
+        "scan_seconds": 0.0021439589327201247,
+        "hash_seconds": 0.013759249937720597,
+        "search_batch_seconds": 5.214833014179021e-05
+      },
+      {
+        "scan_seconds": 0.002143584075383842,
+        "hash_seconds": 0.013749958015978336,
+        "search_batch_seconds": 5.2500414894893766e-05
+      },
+      {
+        "scan_seconds": 0.0021842499263584614,
+        "hash_seconds": 0.014074250007979572,
+        "search_batch_seconds": 5.245625041425228e-05
+      },
+      {
+        "scan_seconds": 0.002250082907266915,
+        "hash_seconds": 0.013774582999758422,
+        "search_batch_seconds": 5.242479499429464e-05
+      },
+      {
+        "scan_seconds": 0.002193083055317402,
+        "hash_seconds": 0.013871041941456497,
+        "search_batch_seconds": 5.286604515276849e-05
+      },
+      {
+        "scan_seconds": 0.002218667068518698,
+        "hash_seconds": 0.013798333005979657,
+        "search_batch_seconds": 5.276020499877632e-05
+      }
+    ],
+    "rust": [
+      {
+        "scan_seconds": 0.00505775,
+        "hash_seconds": 0.049298958,
+        "search_batch_seconds": 5.9877289999999996e-05
+      },
+      {
+        "scan_seconds": 0.0005455,
+        "hash_seconds": 0.025970291,
+        "search_batch_seconds": 6.024167e-05
+      },
+      {
+        "scan_seconds": 0.000478292,
+        "hash_seconds": 0.02629225,
+        "search_batch_seconds": 5.975125e-05
+      },
+      {
+        "scan_seconds": 0.000464625,
+        "hash_seconds": 0.025988167,
+        "search_batch_seconds": 6.1618545e-05
+      },
+      {
+        "scan_seconds": 0.000504125,
+        "hash_seconds": 0.026197459,
+        "search_batch_seconds": 6.1237085e-05
+      },
+      {
+        "scan_seconds": 0.000468042,
+        "hash_seconds": 0.025780959,
+        "search_batch_seconds": 6.1241665e-05
+      },
+      {
+        "scan_seconds": 0.000535875,
+        "hash_seconds": 0.026352875,
+        "search_batch_seconds": 6.136229e-05
+      }
+    ],
+    "swift": [
+      {
+        "scan_seconds": 0.009969125036150217,
+        "hash_seconds": 0.03785233327653259,
+        "search_batch_seconds": 9.128249948844313e-05
+      },
+      {
+        "scan_seconds": 0.0024224166991189122,
+        "hash_seconds": 0.018129583331756294,
+        "search_batch_seconds": 7.70558335352689e-05
+      },
+      {
+        "scan_seconds": 0.00239483336918056,
+        "hash_seconds": 0.018238625023514032,
+        "search_batch_seconds": 7.756708306260407e-05
+      },
+      {
+        "scan_seconds": 0.0023326249793171883,
+        "hash_seconds": 0.018253333400934935,
+        "search_batch_seconds": 7.74060416733846e-05
+      },
+      {
+        "scan_seconds": 0.0023727500811219215,
+        "hash_seconds": 0.01848395843990147,
+        "search_batch_seconds": 7.692416664212943e-05
+      },
+      {
+        "scan_seconds": 0.0023134166840463877,
+        "hash_seconds": 0.018200499936938286,
+        "search_batch_seconds": 7.803999993484467e-05
+      },
+      {
+        "scan_seconds": 0.002302041626535356,
+        "hash_seconds": 0.01808824995532632,
+        "search_batch_seconds": 7.706000003963709e-05
+      }
+    ]
+  },
+  "median": {
+    "python": {
+      "scan_seconds": 0.002193083055317402,
+      "hash_seconds": 0.013798333005979657,
+      "search_batch_seconds": 5.2500414894893766e-05
+    },
+    "rust": {
+      "scan_seconds": 0.000504125,
+      "hash_seconds": 0.026197459,
+      "search_batch_seconds": 6.1237085e-05
+    },
+    "swift": {
+      "scan_seconds": 0.0023727500811219215,
+      "hash_seconds": 0.018238625023514032,
+      "search_batch_seconds": 7.74060416733846e-05
+    }
+  }
+}

@@ -40,3 +40,10 @@ pics/
 
 # HuggingFace cache (local dev)
 .hf_cache/
+
+# Desktop app local runtimes, models, and build products
+.cache/
+.runtime/
+models/
+macos/.build/
+macos/.swiftpm/

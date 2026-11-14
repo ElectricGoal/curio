@@ -40,3 +40,25 @@ def test_sha1_stable(tmp_image_dir: Path) -> None:
     h2 = sha1_of_file(p)
     assert h1 == h2
     assert len(h1) == 40
+
+
+def test_scan_skips_hidden_files_and_folders(tmp_image_dir: Path) -> None:
+    """Dot-prefixed entries are never shown in Finder or the app, so never indexed."""
+    from PIL import Image
+
+    hidden_dir = tmp_image_dir / ".thumbnails"
+    hidden_dir.mkdir()
+    Image.new("RGB", (8, 8), "white").save(hidden_dir / "cached.png")
+    Image.new("RGB", (8, 8), "white").save(tmp_image_dir / ".hidden.png")
+    Image.new("RGB", (8, 8), "white").save(tmp_image_dir / "sub" / ".also-hidden.png")
+
+    names = {f.rel_path for f in scan(tmp_image_dir)}
+
+    assert names == {"red.png", "green.png", "blue.png", "sub/gray.png"}
+
+
+def test_scan_includes_gif(tmp_image_dir: Path) -> None:
+    from PIL import Image
+
+    Image.new("RGB", (8, 8), "white").save(tmp_image_dir / "anim.gif")
+    assert "anim.gif" in {f.rel_path for f in scan(tmp_image_dir)}

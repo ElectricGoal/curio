@@ -14,7 +14,7 @@ MANIFEST_VERSION: Final = 1
 
 # File extensions are lowercase with leading dot
 SUPPORTED_EXTENSIONS: Final[frozenset[str]] = frozenset(
-    {".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif", ".tif", ".tiff", ".bmp"}
+    {".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif", ".tif", ".tiff", ".bmp", ".gif"}
 )
 
 
@@ -25,15 +25,22 @@ class ModelSpec:
     id: str  # HuggingFace repo id
     dim: int  # output embedding dimension
     image_size: int  # square input resolution expected by preprocessor
-    family: str  # "mobileclip" | "siglip" | "clip"
+    family: str  # embedder backend: "mobileclip" | "clip"
     display_name: str
 
 
 # Registry of supported models. Keys are short aliases used by --model.
+#
+# Measured on Apple Silicon (peak memory footprint while indexing, batch 8):
+#
+#   mobileclip-s4   4.3 GB    24 img/s   default: the best search quality here
+#   clip-vit-b32    1.7 GB   125 img/s   the light option for 8 GB Macs
+#
+# Removed, along with the MLX backend they needed: siglip-so400m (both sizes),
+# siglip2-base-8bit (failed inside mlx-embeddings) and clip-vit-l14. Indexes
+# built with a removed model are reported as needing a rebuild.
 MODEL_REGISTRY: Final[dict[str, ModelSpec]] = {
-    # ── MobileCLIP (PyTorch + MPS) ──────────────────────────────────────────
-    # Apple's fastest high-quality CLIP variant. Uses PyTorch MPS (Apple GPU).
-    # Requires open-clip-torch + ml-mobileclip. dim=768, image_size=256.
+    # Apple MobileCLIP via open_clip on PyTorch MPS. Requires ml-mobileclip.
     "mobileclip-s4": ModelSpec(
         id="apple/MobileCLIP-S4",
         dim=768,
@@ -41,43 +48,13 @@ MODEL_REGISTRY: Final[dict[str, ModelSpec]] = {
         family="mobileclip",
         display_name="MobileCLIP-S4 (Apple)",
     ),
-    # ── SigLIP (MLX) ────────────────────────────────────────────────────────
-    # Confirmed working with mlx-embeddings. Best quality in the MLX family.
-    "siglip-so400m": ModelSpec(
-        id="mlx-community/siglip-so400m-patch14-384",
-        dim=1152,
-        image_size=384,
-        family="siglip",
-        display_name="SigLIP SO400M (patch14, 384)",
-    ),
-    "siglip-so400m-224": ModelSpec(
-        id="mlx-community/siglip-so400m-patch14-224",
-        dim=1152,
-        image_size=224,
-        family="siglip",
-        display_name="SigLIP SO400M (patch14, 224)",
-    ),
-    "siglip2-base-8bit": ModelSpec(
-        id="mlx-community/siglip2-base-patch16-224-8bit",
-        dim=768,
-        image_size=224,
-        family="siglip",
-        display_name="SigLIP2 Base 8-bit (patch16, 224)",
-    ),
-    # ── CLIP (MLX) ──────────────────────────────────────────────────────────
+    # OpenAI CLIP via Transformers on PyTorch MPS.
     "clip-vit-b32": ModelSpec(
-        id="mlx-community/clip-vit-base-patch32",
+        id="openai/clip-vit-base-patch32",
         dim=512,
         image_size=224,
         family="clip",
         display_name="OpenAI CLIP ViT-B/32",
-    ),
-    "clip-vit-l14": ModelSpec(
-        id="mlx-community/clip-vit-large-patch14",
-        dim=768,
-        image_size=224,
-        family="clip",
-        display_name="OpenAI CLIP ViT-L/14",
     ),
 }
 
@@ -95,8 +72,7 @@ def resolve_model(alias_or_id: str) -> ModelSpec:
         if spec.id == alias_or_id:
             return spec
     raise ValueError(
-        f"Unknown model: {alias_or_id!r}. "
-        f"Available aliases: {', '.join(MODEL_REGISTRY)}"
+        f"Unknown model: {alias_or_id!r}. Available aliases: {', '.join(MODEL_REGISTRY)}"
     )
 
 
@@ -111,7 +87,7 @@ def check_platform() -> None:
     if system != "Darwin":
         raise PlatformError(
             f"imgsearch requires macOS (Darwin), got {system}. "
-            "MLX acceleration is only available on Apple Silicon."
+            "GPU acceleration (Metal) is only available on Apple Silicon."
         )
     if machine not in {"arm64", "aarch64"}:
         raise PlatformError(

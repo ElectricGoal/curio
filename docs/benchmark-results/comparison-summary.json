@@ -1,0 +1,96 @@
+{
+  "hardware": "Apple M4",
+  "os": "27.0.1",
+  "input": "/Volumes/ESSD/workspace/my_projects/pinterest_similarity_search/python_scripts/python_scripts/output/images",
+  "count": 201,
+  "median_inference_seconds": {
+    "swift": {
+      "image": 3.5703988346504048,
+      "text": 0.018325000070035458
+    },
+    "rust": {
+      "image": 3.5820748290000006,
+      "text": 0.015825583
+    },
+    "python_batch1": {
+      "image": 13.424819375039078,
+      "text": 0.11267099995166063
+    },
+    "python_batch8": {
+      "image": 7.822325750021264,
+      "text": 0.0237711250083521
+    }
+  },
+  "native_quality": {
+    "swift": [
+      {
+        "min_image_cosine": 0.9899075627326965,
+        "min_text_cosine": 0.9999825358390808,
+        "top1_agreement": 0.9901960784313726,
+        "top10_overlap": 0.893137254901961,
+        "finite": true
+      },
+      {
+        "min_image_cosine": 0.9899075627326965,
+        "min_text_cosine": 0.9999825358390808,
+        "top1_agreement": 0.9901960784313726,
+        "top10_overlap": 0.893137254901961,
+        "finite": true
+      },
+      {
+        "min_image_cosine": 0.9899075627326965,
+        "min_text_cosine": 0.9999825358390808,
+        "top1_agreement": 0.9901960784313726,
+        "top10_overlap": 0.893137254901961,
+        "finite": true
+      }
+    ],
+    "rust": [
+      {
+        "min_image_cosine": 0.9899075627326965,
+        "min_text_cosine": 0.9999825358390808,
+        "top1_agreement": 0.9901960784313726,
+        "top10_overlap": 0.893137254901961,
+        "finite": true
+      },
+      {
+        "min_image_cosine": 0.9899075627326965,
+        "min_text_cosine": 0.9999825358390808,
+        "top1_agreement": 0.9901960784313726,
+        "top10_overlap": 0.893137254901961,
+        "finite": true
+      },
+      {
+        "min_image_cosine": 0.9899075627326965,
+        "min_text_cosine": 0.9999825358390808,
+        "top1_agreement": 0.9901960784313726,
+        "top10_overlap": 0.893137254901961,
+        "finite": true
+      }
+    ]
+  },
+  "component_medians": {
+    "python": {
+      "scan_seconds": 0.002193083055317402,
+      "hash_seconds": 0.013798333005979657,
+      "search_batch_seconds": 5.2500414894893766e-05
+    },
+    "rust": {
+      "scan_seconds": 0.000504125,
+      "hash_seconds": 0.026197459,
+      "search_batch_seconds": 6.1237085e-05
+    },
+    "swift": {
+      "scan_seconds": 0.0023727500811219215,
+      "hash_seconds": 0.018238625023514032,
+      "search_batch_seconds": 7.74060416733846e-05
+    }
+  },
+  "notes": [
+    "Native inference uses Core ML float16; Python uses PyTorch MPS float32.",
+    "Native and Python inference trials use identical preprocessed tensors. Image decoding and tokenization are excluded.",
+    "Swift and Rust both call Core ML. Rust uses the checked-in Swift C ABI bridge.",
+    "Component timings exclude executable launch; cold model compilation/loading is retained in raw reports.",
+    "Corpus: all 201 images; retrieval correctness queries: three text queries and every corpus image."
+  ]
+}

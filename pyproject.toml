@@ -5,12 +5,12 @@ build-backend = "hatchling.build"
 [project]
 name = "imgsearch"
 version = "0.1.0"
-description = "Semantic image search CLI for macOS, accelerated by MLX"
+description = "Semantic image search for macOS, accelerated by the Apple GPU"
 readme = "README.md"
 requires-python = ">=3.11,<3.13"
 license = { text = "MIT" }
 authors = [{ name = "toxu" }]
-keywords = ["mlx", "clip", "siglip", "image-search", "semantic-search", "macos"]
+keywords = ["clip", "mobileclip", "image-search", "semantic-search", "macos"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Environment :: Console",
@@ -24,11 +24,9 @@ classifiers = [
     "Topic :: Utilities",
 ]
 dependencies = [
-    # MLX backend (SigLIP / CLIP models)
-    "mlx>=0.20",
-    "mlx-embeddings>=0.0.5",
-    # MobileCLIP backend (PyTorch MPS on Apple Silicon)
+    # Embedding backends: MobileCLIP (open_clip) and CLIP (Transformers), on PyTorch MPS
     "torch>=2.2",
+    "transformers>=5.5,<6",
     "open-clip-torch>=2.24",
     # Vector store & indexing
     "faiss-cpu>=1.8.0",
@@ -75,7 +73,7 @@ packages = ["src/imgsearch"]
 include = ["src/imgsearch", "README.md", "LICENSE", "pyproject.toml"]
 
 [tool.uv]
-# Keep MLX wheels pinned to macOS arm64 builds
+# Resolve only for Apple Silicon Macs, the one platform this runs on
 environments = ["sys_platform == 'darwin' and platform_machine == 'arm64'"]
 
 [tool.ruff]

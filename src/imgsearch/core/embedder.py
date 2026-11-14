@@ -1,21 +1,21 @@
-"""MLX embedding model wrapper.
+"""Embedding backends.
 
-Thin façade over `mlx-embeddings` that exposes a stable two-method interface
-(`encode_images`, `encode_text`) returning L2-normalized float32 numpy arrays.
+Each backend turns images and text into L2-normalized float32 vectors that can
+be compared with a dot product. Two are available, both on PyTorch with the
+Apple GPU (MPS): MobileCLIP via open_clip, and OpenAI CLIP via Transformers.
 
-The underlying package is imported lazily so unit tests that mock the embedder
-can run on non-Mac CI and so the CLI starts fast when the user runs
-`imgsearch --help` without loading the model.
+Model frameworks are imported lazily so unit tests that mock the embedder stay
+fast and `imgsearch --help` does not load a model.
 """
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Sequence
+import json
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, Protocol
 
 import numpy as np
-
 from PIL import Image
 
 from imgsearch.config import ModelSpec
@@ -42,132 +42,26 @@ def _l2_normalize(x: np.ndarray) -> np.ndarray:
     return (x / norms).astype(np.float32, copy=False)
 
 
-def _to_numpy(value: Any) -> np.ndarray:
-    """Convert mx.array / torch.Tensor / numpy / list to a numpy array."""
-    if isinstance(value, np.ndarray):
-        return value
-    # mlx arrays expose __array__ via np.asarray()
-    try:
-        return np.asarray(value)
-    except Exception:
-        pass
-    # torch fallback
-    if hasattr(value, "detach") and hasattr(value, "cpu"):
-        return value.detach().cpu().numpy()
-    raise TypeError(f"Cannot convert {type(value).__name__} to numpy")
+# Sections of a model repository's config.json that define the network itself.
+_MODEL_CONFIG_SECTIONS = ("embed_dim", "vision_cfg", "text_cfg")
+_SELF_CHECK_PROMPTS = ("a winding road through green hills", "a bowl of ripe strawberries")
+# Healthy CLIP text encoders put unrelated prompts well below this; a broken
+# one that ignores its input scores ~0.999.
+_SELF_CHECK_MAX_SIMILARITY = 0.9
 
 
-class MLXEmbedder:
-    """Production embedder backed by mlx-embeddings."""
+def _config_overrides(repo_config: dict[str, Any]) -> dict[str, Any]:
+    """Model settings from a checkpoint's own config, to override open_clip's.
 
-    def __init__(self, spec: ModelSpec) -> None:
-        self.spec = spec
-        self._model: Any = None
-        self._processor: Any = None
-
-    # ----- lifecycle -----
-
-    def load(self) -> None:
-        """Download (if needed) and load model + processor. Idempotent."""
-        if self._model is not None:
-            return
-        try:
-            from mlx_embeddings.utils import load as mlx_load  # type: ignore[import-not-found]
-        except ImportError as exc:  # pragma: no cover - depends on install
-            raise RuntimeError(
-                "mlx-embeddings is not installed. "
-                "Install with: pip install 'mlx-embeddings>=0.0.5'"
-            ) from exc
-        self._model, self._processor = mlx_load(self.spec.id)
-
-    # ----- image encoding -----
-
-    def encode_images(self, paths: Sequence[Path]) -> np.ndarray:
-        """Encode image files from disk. Returns (N, dim) L2-normalized float32."""
-        if not paths:
-            return np.zeros((0, self.spec.dim), dtype=np.float32)
-        self.load()
-        images = [load_rgb(p) for p in paths]
-        return self.encode_pil(images)
-
-    def encode_pil(self, images: Sequence[Any]) -> np.ndarray:
-        """Encode pre-loaded PIL images. Returns (N, dim) L2-normalized float32.
-
-        Preferred over encode_images when images are already loaded (e.g. from
-        the prefetch queue), avoiding a redundant file open.
-        """
-        if not images:
-            return np.zeros((0, self.spec.dim), dtype=np.float32)
-        self.load()
-        features = self._run_image_batch(images)
-        return _l2_normalize(features)
-
-    def _run_image_batch(self, images: Iterable[Any]) -> np.ndarray:
-        """Invoke the underlying processor + model to get raw features."""
-        assert self._model is not None and self._processor is not None
-        inputs = self._processor(
-            images=list(images),
-            return_tensors="mlx",
-        )
-        pixel_values = inputs["pixel_values"]
-
-        # Prefer the dedicated helper if present (HF CLIP/SigLIP convention)
-        if hasattr(self._model, "get_image_features"):
-            feats = self._model.get_image_features(pixel_values=pixel_values)
-        else:
-            outputs = self._model(pixel_values=pixel_values)
-            feats = _extract_image_embeds(outputs)
-
-        # Force MLX to materialise the lazy compute graph now, before the next
-        # batch accumulates. Without this, MLX can defer evaluation across
-        # batches causing a large memory spike and a slow flush at commit time.
-        try:
-            import mlx.core as mx  # type: ignore[import-not-found]
-            mx.eval(feats)
-        except Exception:
-            pass  # non-fatal: mx.eval is an optimisation, not a correctness requirement
-
-        arr = _to_numpy(feats).astype(np.float32, copy=False)
-        if arr.ndim != 2 or arr.shape[1] != self.spec.dim:
-            raise RuntimeError(
-                f"Unexpected image feature shape {arr.shape}, "
-                f"expected (*, {self.spec.dim})"
-            )
-        return arr
-
-    # ----- text encoding -----
-
-    def encode_text(self, text: str) -> np.ndarray:
-        """Encode a single text query. Returns (dim,) L2-normalized float32."""
-        if not text or not text.strip():
-            raise ValueError("text query must be non-empty")
-        self.load()
-        inputs = self._processor(
-            text=[text],
-            padding="max_length",
-            return_tensors="mlx",
-        )
-        input_ids = inputs["input_ids"]
-        attention_mask = inputs.get("attention_mask")
-
-        kwargs: dict[str, Any] = {"input_ids": input_ids}
-        if attention_mask is not None:
-            kwargs["attention_mask"] = attention_mask
-
-        if hasattr(self._model, "get_text_features"):
-            feats = self._model.get_text_features(**kwargs)
-        else:
-            outputs = self._model(**kwargs)
-            feats = _extract_text_embeds(outputs)
-        arr = _to_numpy(feats).astype(np.float32, copy=False)
-        if arr.ndim == 2:
-            arr = arr[0]
-        if arr.shape[0] != self.spec.dim:
-            raise RuntimeError(
-                f"Unexpected text feature shape {arr.shape}, "
-                f"expected ({self.spec.dim},)"
-            )
-        return _l2_normalize(arr)
+    open_clip is asked for a built-in architecture by name, and its config for
+    that name is not guaranteed to match a given checkpoint. For
+    apple/MobileCLIP-S4 the built-in "MobileCLIP2-S4" config sets
+    ``no_causal_mask: true`` while the weights were trained with the causal
+    mask (``false`` in the repo). Loading succeeds either way — every tensor
+    has the same shape — but without the mask the text encoder collapses and
+    every query gets practically the same embedding.
+    """
+    return {key: repo_config[key] for key in _MODEL_CONFIG_SECTIONS if key in repo_config}
 
 
 class MobileCLIPEmbedder:
@@ -187,6 +81,7 @@ class MobileCLIPEmbedder:
         "apple/MobileCLIP-S4": ("MobileCLIP2-S4", "mobileclip_s4.pt"),
         "apple/MobileCLIP2-S4": ("MobileCLIP2-S4", "mobileclip2_s4.pt"),
     }
+    _CONFIG_FILENAME = "config.json"
 
     def __init__(self, spec: ModelSpec) -> None:
         self.spec = spec
@@ -213,13 +108,13 @@ class MobileCLIPEmbedder:
         if self._model is not None:
             return
         try:
-            import torch  # type: ignore[import-not-found]
-            import open_clip  # type: ignore[import-not-found]
             import mobileclip  # type: ignore[import-not-found]  # noqa: F401  (registers architectures)
+            import open_clip  # type: ignore[import-not-found]
+            import torch  # type: ignore[import-not-found]
+            from huggingface_hub import hf_hub_download  # type: ignore[import-not-found]
             from mobileclip.modules.common.mobileone import (  # type: ignore[import-not-found]
                 reparameterize_model,
             )
-            from huggingface_hub import hf_hub_download  # type: ignore[import-not-found]
         except ImportError as exc:
             raise RuntimeError(
                 "MobileCLIP requires torch, open-clip-torch, and ml-mobileclip. "
@@ -235,13 +130,18 @@ class MobileCLIPEmbedder:
         arch_name, ckpt_filename = entry
 
         ckpt_path = hf_hub_download(repo_id=self.spec.id, filename=ckpt_filename)
+        # The repository ships the exact configuration its weights were trained
+        # with. It must win over open_clip's built-in config for `arch_name`,
+        # which differs in ways that matter (see `_config_overrides`).
+        config_path = hf_hub_download(repo_id=self.spec.id, filename=self._CONFIG_FILENAME)
+        overrides = _config_overrides(json.loads(Path(config_path).read_text()))
 
         # Apple's README passes these kwargs; they disable open_clip's default
         # ImageNet normalization because the MobileCLIP preprocessing pipeline
         # already handles scaling.
         model_kwargs = {"image_mean": (0.0, 0.0, 0.0), "image_std": (1.0, 1.0, 1.0)}
         model, _, preprocess = open_clip.create_model_and_transforms(
-            arch_name, pretrained=ckpt_path, **model_kwargs
+            arch_name, pretrained=ckpt_path, **model_kwargs, **overrides
         )
         model.eval()
         # Fuse reparameterizable branches (MobileOne / FastViT) for inference speed.
@@ -252,6 +152,29 @@ class MobileCLIPEmbedder:
         self._model = model
         self._preprocess = preprocess
         self._tokenizer = open_clip.get_tokenizer(arch_name)
+        try:
+            self._verify_text_encoder()
+        except Exception:
+            self._model = None  # never serve searches from a model that failed its check
+            raise
+
+    def _verify_text_encoder(self) -> None:
+        """Fail loudly if the text encoder ignores its input.
+
+        A mis-configured text tower still loads and still returns unit vectors,
+        but maps every query to nearly the same one — search then "works" while
+        returning the same images for anything typed. Two unrelated prompts
+        must land clearly apart.
+        """
+        first, second = (self.encode_text(prompt) for prompt in _SELF_CHECK_PROMPTS)
+        similarity = float(first @ second)
+        if similarity > _SELF_CHECK_MAX_SIMILARITY:
+            raise RuntimeError(
+                f"{self.spec.display_name} loaded, but its text encoder is not responding to "
+                f"queries (unrelated prompts are {similarity:.3f} similar). Text search would "
+                "return meaningless results; the installed open-clip-torch version may be "
+                "incompatible with this model."
+            )
 
     def encode_images(self, paths: Sequence[Path]) -> np.ndarray:
         """Encode image files from disk. Returns (N, dim) L2-normalized float32."""
@@ -275,8 +198,7 @@ class MobileCLIPEmbedder:
         arr = feats.cpu().float().numpy()
         if arr.ndim != 2 or arr.shape[1] != self.spec.dim:
             raise RuntimeError(
-                f"Unexpected image feature shape {arr.shape}, "
-                f"expected (*, {self.spec.dim})"
+                f"Unexpected image feature shape {arr.shape}, expected (*, {self.spec.dim})"
             )
         return arr.astype(np.float32, copy=False)
 
@@ -296,34 +218,64 @@ class MobileCLIPEmbedder:
             arr = arr[0]
         if arr.shape[0] != self.spec.dim:
             raise RuntimeError(
-                f"Unexpected text feature shape {arr.shape}, "
-                f"expected ({self.spec.dim},)"
+                f"Unexpected text feature shape {arr.shape}, expected ({self.spec.dim},)"
             )
         return arr.astype(np.float32, copy=False)
 
 
-def create_embedder(spec: ModelSpec) -> MLXEmbedder | MobileCLIPEmbedder:
-    """Factory: return the correct embedder for the given ModelSpec."""
+class CLIPEmbedder:
+    """CLIP via Transformers on Apple Metal, with project-local HF weights."""
+
+    def __init__(self, spec: ModelSpec) -> None:
+        import torch
+
+        self.spec = spec
+        self._torch = torch
+        self._device = "mps" if torch.backends.mps.is_available() else "cpu"
+        self._model = None
+        self._processor = None
+
+    def load(self) -> None:
+        if self._model is not None:
+            return
+        from transformers import CLIPModel, CLIPProcessor
+
+        self._processor = CLIPProcessor.from_pretrained(self.spec.id)
+        self._model = CLIPModel.from_pretrained(self.spec.id).eval().to(self._device)
+
+    def encode_images(self, paths: Sequence[Path]) -> np.ndarray:
+        return self.encode_pil([load_rgb(p) for p in paths])
+
+    def encode_pil(self, images: Sequence[Any]) -> np.ndarray:
+        if not images:
+            return np.zeros((0, self.spec.dim), dtype=np.float32)
+        self.load()
+        inputs = self._processor(images=list(images), return_tensors="pt").to(self._device)
+        with self._torch.inference_mode():
+            output = self._model.vision_model(pixel_values=inputs["pixel_values"])
+            features = self._model.visual_projection(output.pooler_output)
+        return _l2_normalize(features.cpu().float().numpy())
+
+    def encode_text(self, text: str) -> np.ndarray:
+        if not text.strip():
+            raise ValueError("text query must be non-empty")
+        self.load()
+        inputs = self._processor(
+            text=[text], padding=True, truncation=True, return_tensors="pt"
+        ).to(self._device)
+        with self._torch.inference_mode():
+            output = self._model.text_model(**inputs)
+            features = self._model.text_projection(output.pooler_output)
+        return _l2_normalize(features.cpu().float().numpy()[0])
+
+
+def create_embedder(spec: ModelSpec) -> MobileCLIPEmbedder | CLIPEmbedder:
+    """Factory: return the embedder backend for the given ModelSpec."""
     if spec.family == "mobileclip":
         return MobileCLIPEmbedder(spec)
-    return MLXEmbedder(spec)
-
-
-def _extract_image_embeds(outputs: Any) -> Any:
-    """Pull image embeddings out of a variety of output container shapes."""
-    for name in ("image_embeds", "vision_embeds", "pooler_output", "last_hidden_state"):
-        if hasattr(outputs, name):
-            return getattr(outputs, name)
-        if isinstance(outputs, dict) and name in outputs:
-            return outputs[name]
-    raise RuntimeError("Could not locate image embeddings in model output")
-
-
-def _extract_text_embeds(outputs: Any) -> Any:
-    """Pull text embeddings out of a variety of output container shapes."""
-    for name in ("text_embeds", "pooler_output", "last_hidden_state"):
-        if hasattr(outputs, name):
-            return getattr(outputs, name)
-        if isinstance(outputs, dict) and name in outputs:
-            return outputs[name]
-    raise RuntimeError("Could not locate text embeddings in model output")
+    if spec.family == "clip":
+        return CLIPEmbedder(spec)
+    raise ValueError(
+        f"No embedder backend for model family {spec.family!r} ({spec.display_name}). "
+        "Available backends: mobileclip, clip."
+    )

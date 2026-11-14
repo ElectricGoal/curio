@@ -1,0 +1,88 @@
+{
+  "date": "2026-11-14",
+  "hardware": "Apple M4",
+  "os": "macOS 27.0",
+  "input": "84 mixed images (photos, screenshots, icons; 1 undecodable), 16 text queries",
+  "scope": "Whole pipeline per backend: decode, resize, embed. Swift figures are the app's engine (NativeEngine: Core ML float16, GPU, SQLite index); Python figures are the CLI's embedder (PyTorch MPS, batches of 8).",
+  "swift_engine": {
+    "mobileclip-s4": {
+      "first_use": {
+        "backend": "swift-engine/mobileclip-s4",
+        "images": 83,
+        "images_per_s_end_to_end": 31.1,
+        "index_total_s": 27.45,
+        "model_load_s": 24.78,
+        "peak_memory_gb": 0.36,
+        "process_start_to_ready_s": 24.79,
+        "text_query_ms": 8.2,
+        "unreadable": 1
+      },
+      "later_launches": {
+        "backend": "swift-engine/mobileclip-s4",
+        "images": 83,
+        "images_per_s_end_to_end": 33,
+        "index_total_s": 2.7,
+        "model_load_s": 0.18,
+        "peak_memory_gb": 0.22,
+        "process_start_to_ready_s": 0.19,
+        "text_query_ms": 8,
+        "unreadable": 1
+      }
+    },
+    "clip-vit-b32": {
+      "first_use": {
+        "backend": "swift-engine/clip-vit-b32",
+        "images": 83,
+        "images_per_s_end_to_end": 91.2,
+        "index_total_s": 9.15,
+        "model_load_s": 8.24,
+        "peak_memory_gb": 0.25,
+        "process_start_to_ready_s": 8.24,
+        "text_query_ms": 4.4,
+        "unreadable": 1
+      },
+      "later_launches": {
+        "backend": "swift-engine/clip-vit-b32",
+        "images": 83,
+        "images_per_s_end_to_end": 96.7,
+        "index_total_s": 0.95,
+        "model_load_s": 0.09,
+        "peak_memory_gb": 0.18,
+        "process_start_to_ready_s": 0.09,
+        "text_query_ms": 4.2,
+        "unreadable": 1
+      }
+    }
+  },
+  "python": {
+    "mobileclip-s4": {
+      "process_start_to_ready_s": 11.02,
+      "images_per_s_end_to_end": 22.2,
+      "text_query_ms": 34.6,
+      "peak_memory_gb": 4.29
+    },
+    "clip-vit-b32": {
+      "process_start_to_ready_s": 24.84,
+      "images_per_s_end_to_end": 117.5,
+      "text_query_ms": 10.9,
+      "peak_memory_gb": 1.9
+    }
+  },
+  "agreement_mobileclip_s4": {
+    "model_only_same_pixels_float16_gpu": {
+      "top1": "16/16",
+      "top10_overlap": 1.0,
+      "min_image_cosine": 0.9995
+    },
+    "end_to_end": {
+      "top1": "10/16",
+      "top10_overlap": 0.788,
+      "min_image_cosine_images_64px_or_larger": 0.991
+    },
+    "end_to_end_same_transparency_handling": {
+      "top1": "15/16",
+      "top10_overlap": 0.925
+    },
+    "explanation": "The app draws transparent images on white and applies EXIF rotation; the CLI drops alpha and ignores rotation. Differences are confined to transparent PNGs and icons under 64 px."
+  }
+}

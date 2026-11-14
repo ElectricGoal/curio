@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import contextlib
 import queue
+import threading
 import time
+from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
@@ -43,12 +46,14 @@ _IO_WORKERS = 4
 def run(
     folder: Path = typer.Argument(..., help="Folder to index."),
     model: str = typer.Option(
-        None, "--model", "-m", help="Model alias (siglip2-base, siglip-base, clip-vit-b32)."
+        None, "--model", "-m", help="Model alias: mobileclip-s4 (default) or clip-vit-b32."
     ),
     batch: int = typer.Option(
         DEFAULT_BATCH_SIZE, "--batch", "-b", min=1, max=128, help="Image batch size."
     ),
-    recursive: bool = typer.Option(True, "--recursive/--no-recursive", help="Recurse into subfolders."),
+    recursive: bool = typer.Option(
+        True, "--recursive/--no-recursive", help="Recurse into subfolders."
+    ),
 ) -> None:
     preflight()
     folder = resolve_folder(folder)
@@ -121,7 +126,9 @@ def run(
             f"in {elapsed:.1f}s ({rate:.1f} img/s)"
         )
         if failures:
-            err_console.print(f"[yellow]warning:[/yellow] skipped {failures} files due to decode errors")
+            err_console.print(
+                f"[yellow]warning:[/yellow] skipped {failures} files due to decode errors"
+            )
 
 
 @dataclass
@@ -148,36 +155,58 @@ def _prepare_one(file: DiscoveredFile, image_size: int) -> _PreparedEntry | None
 def _prefetch_batches(
     chunks: list[list[DiscoveredFile]],
     image_size: int,
-) -> list[list[_PreparedEntry | None]]:
+) -> Iterator[list[_PreparedEntry | None]]:
     """Yield prepared batches. Each chunk is loaded concurrently via a thread pool
     while the previous batch is being embedded on the GPU.
 
     Uses a bounded queue so at most _PREFETCH_QUEUE_DEPTH batches sit in RAM
     simultaneously, preventing memory overcommit on large folders.
+
+    Closing the generator early (the consumer stops iterating, e.g. on cancel)
+    stops the loader thread instead of leaving it blocked on a full queue.
     """
-    result_queue: queue.Queue[list[_PreparedEntry | None]] = queue.Queue(
-        maxsize=_PREFETCH_QUEUE_DEPTH
-    )
-    _SENTINEL = object()
+    result_queue: queue.Queue[object] = queue.Queue(maxsize=_PREFETCH_QUEUE_DEPTH)
+    sentinel = object()
+    stop = threading.Event()
+    failure: list[BaseException] = []
+
+    def _offer(item: object) -> None:
+        while not stop.is_set():
+            try:
+                result_queue.put(item, timeout=0.1)
+                return
+            except queue.Full:
+                continue
 
     def _producer() -> None:
-        with ThreadPoolExecutor(max_workers=_IO_WORKERS) as pool:
-            for chunk in chunks:
-                prepared = list(pool.map(_prepare_one, chunk, [image_size] * len(chunk)))
-                result_queue.put(prepared)
-        result_queue.put(_SENTINEL)  # type: ignore[arg-type]
+        try:
+            with ThreadPoolExecutor(max_workers=_IO_WORKERS) as pool:
+                for chunk in chunks:
+                    if stop.is_set():
+                        break
+                    _offer(list(pool.map(_prepare_one, chunk, [image_size] * len(chunk))))
+        except BaseException as exc:  # surfaced to the consumer below
+            failure.append(exc)
+        finally:
+            _offer(sentinel)
 
-    import threading
-    t = threading.Thread(target=_producer, daemon=True)
-    t.start()
-
-    while True:
-        item = result_queue.get()
-        if item is _SENTINEL:
-            break
-        yield item  # type: ignore[misc]
-
-    t.join()
+    loader = threading.Thread(target=_producer, daemon=True)
+    loader.start()
+    try:
+        while True:
+            item = result_queue.get()
+            if item is sentinel:
+                break
+            yield item  # type: ignore[misc]
+        if failure:
+            raise failure[0]
+    finally:
+        stop.set()
+        while loader.is_alive():
+            # Unblock a producer waiting on a full queue so it can observe `stop`.
+            with contextlib.suppress(queue.Empty):
+                result_queue.get(timeout=0.05)
+        loader.join()
 
 
 def _embed_prepared(

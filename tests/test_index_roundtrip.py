@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import numpy as np
 import pytest
 
 faiss = pytest.importorskip("faiss")  # skip if faiss not installed yet
@@ -91,7 +90,39 @@ def test_model_mismatch_refused(tmp_image_dir: Path, fake_spec: ModelSpec, fake_
     other = ModelSpec(
         id="different/model", dim=8, image_size=16, family="test", display_name="Other"
     )
-    with pytest.raises(Exception) as excinfo:
-        with Index(tmp_image_dir, other, "other") as idx:
-            idx.open(create=True)
+    with pytest.raises(Exception) as excinfo, Index(tmp_image_dir, other, "other") as idx:
+        idx.open(create=True)
     assert "model" in str(excinfo.value).lower()
+
+
+def test_replacing_image_does_not_leave_stale_search_vectors(
+    tmp_image_dir: Path, fake_spec: ModelSpec, fake_embedder
+) -> None:
+    with Index(tmp_image_dir, fake_spec, "fake") as idx:
+        idx.open(create=True)
+        files = list(scan(tmp_image_dir))
+        vecs, sha1s, dims = _embed_all(fake_embedder, files)
+        idx.add_batch(files, vecs, sha1s, dims)
+        # Replacing all paths repeatedly must not make top-k return fewer hits.
+        for _ in range(3):
+            idx.add_batch(files, vecs, sha1s, dims)
+        idx.commit()
+        assert idx._vectors.count == len(files)
+        assert len(idx.search(fake_embedder.encode_text("red"), len(files))) == len(files)
+
+
+def test_reconcile_removes_vectors_from_interrupted_delete(
+    tmp_image_dir: Path, fake_spec: ModelSpec, fake_embedder
+) -> None:
+    with Index(tmp_image_dir, fake_spec, "fake") as idx:
+        idx.open(create=True)
+        files = list(scan(tmp_image_dir))
+        vecs, sha1s, dims = _embed_all(fake_embedder, files)
+        idx.add_batch(files, vecs, sha1s, dims)
+        idx.commit()
+        # Metadata committed, but process stopped before updated vectors saved.
+        idx.apply_deletes(idx._meta.all_ids())
+    with Index(tmp_image_dir, fake_spec, "fake") as idx:
+        idx.open()
+        assert idx.count == 0
+        assert idx._vectors.count == 0

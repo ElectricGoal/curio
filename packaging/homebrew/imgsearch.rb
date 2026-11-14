@@ -15,7 +15,7 @@
 class Imgsearch < Formula
   include Language::Python::Virtualenv
 
-  desc "Semantic image search CLI for macOS, accelerated by MLX"
+  desc "Semantic image search CLI for macOS, accelerated by the Apple GPU"
   homepage "https://github.com/toxu/imgsearch"
   url "https://files.pythonhosted.org/packages/source/i/imgsearch/imgsearch-0.1.0.tar.gz"
   sha256 "REPLACE_WITH_SDIST_SHA256"

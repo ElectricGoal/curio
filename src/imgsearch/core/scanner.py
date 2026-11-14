@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import hashlib
+import os
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
+from stat import S_ISREG
 
-from imgsearch.config import INDEX_DIR_NAME, SUPPORTED_EXTENSIONS
+from imgsearch.config import SUPPORTED_EXTENSIONS
 
 
 @dataclass(frozen=True)
@@ -26,7 +28,12 @@ def is_image(path: Path) -> bool:
 
 
 def scan(root: Path, recursive: bool = True) -> Iterator[DiscoveredFile]:
-    """Walk `root` yielding image files. Skips the hidden index directory.
+    """Walk `root` yielding image files.
+
+    Hidden entries (names starting with a dot) are skipped at every level:
+    that covers the index directory itself and caches such as `.thumbnails`,
+    and matches what Finder and the desktop app show. Hidden folders are
+    pruned rather than walked, so large dot-directories cost nothing.
 
     The scanner is read-only and does not open files. Callers decide when to
     hash or embed based on mtime staleness.
@@ -35,30 +42,28 @@ def scan(root: Path, recursive: bool = True) -> Iterator[DiscoveredFile]:
     if not root.is_dir():
         raise NotADirectoryError(f"{root} is not a directory")
 
-    iterator = root.rglob("*") if recursive else root.glob("*")
-    for path in iterator:
-        # Skip the index dir entirely
-        try:
-            parts = path.relative_to(root).parts
-        except ValueError:
-            continue
-        if parts and parts[0] == INDEX_DIR_NAME:
-            continue
-        if not path.is_file():
-            continue
-        if not is_image(path):
-            continue
-        try:
-            stat = path.stat()
-        except OSError:
-            # File disappeared between listing and stat — skip silently
-            continue
-        yield DiscoveredFile(
-            abs_path=path,
-            rel_path=path.relative_to(root).as_posix(),
-            mtime=stat.st_mtime,
-            size=stat.st_size,
-        )
+    for directory, subdirs, filenames in os.walk(root):
+        # Pruning in place stops os.walk from descending into hidden folders.
+        subdirs[:] = sorted(d for d in subdirs if not d.startswith(".")) if recursive else []
+        for name in sorted(filenames):
+            if name.startswith("."):
+                continue
+            path = Path(directory, name)
+            if not is_image(path):
+                continue
+            try:
+                stat = path.stat()
+            except OSError:
+                # File disappeared between listing and stat — skip silently
+                continue
+            if not S_ISREG(stat.st_mode):
+                continue
+            yield DiscoveredFile(
+                abs_path=path,
+                rel_path=path.relative_to(root).as_posix(),
+                mtime=stat.st_mtime,
+                size=stat.st_size,
+            )
 
 
 def sha1_of_file(path: Path, chunk_size: int = 1 << 20) -> str:

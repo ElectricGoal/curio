@@ -44,7 +44,7 @@ public final class IndexStore {
   public static let fileName = "index.sqlite"
   static let rebuildFileName = "index.rebuild.sqlite"
   static let manifestName = "manifest.json"
-  /// Bumped when the layout changes. Version 1 was the Python app's format
+  /// Bumped when the layout changes. Version 1 was the format of the app's earlier Python engine
   /// (a FAISS file plus a separate metadata database).
   public static let formatVersion = 2
   /// Files the version-1 format left behind, removed once it is replaced.
@@ -279,8 +279,7 @@ public final class IndexStore {
 
   // MARK: - Files around the database
 
-  /// A small readable summary next to the database. Its version number also
-  /// tells the older Python tool that this index is not in its format.
+  /// A small readable summary next to the database.
   public func writeManifest() throws {
     let manifest: [String: Any] = [
       "version": Self.formatVersion, "model_alias": modelAlias, "model_name": modelName,

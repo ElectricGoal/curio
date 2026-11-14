@@ -3,7 +3,7 @@
   "hardware": "Apple M4",
   "os": "macOS 27.0",
   "input": "84 mixed images (photos, screenshots, icons; 1 undecodable), 16 text queries",
-  "scope": "Whole pipeline per backend: decode, resize, embed. Swift figures are the app's engine (NativeEngine: Core ML float16, GPU, SQLite index); Python figures are the CLI's embedder (PyTorch MPS, batches of 8).",
+  "scope": "Whole pipeline per backend: decode, resize, embed. Swift figures are the app's engine (NativeEngine: Core ML float16, GPU, SQLite index); Python figures are the previous backend's embedder (PyTorch MPS, batches of 8), since removed from this repository.",
   "swift_engine": {
     "mobileclip-s4": {
       "first_use": {
@@ -83,6 +83,6 @@
       "top1": "15/16",
       "top10_overlap": 0.925
     },
-    "explanation": "The app draws transparent images on white and applies EXIF rotation; the CLI drops alpha and ignores rotation. Differences are confined to transparent PNGs and icons under 64 px."
+    "explanation": "The app draws transparent images on white and applies EXIF rotation; the Python code dropped alpha and ignored rotation. Differences are confined to transparent PNGs and icons under 64 px."
   }
 }

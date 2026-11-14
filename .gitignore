@@ -1,49 +1,22 @@
-# Python
-__pycache__/
-*.py[cod]
-*.egg-info/
-*.egg
-.pytest_cache/
-.ruff_cache/
-.coverage
-htmlcov/
-.tox/
-build/
-dist/
-*.whl
-
-# Virtual envs
-.venv/
-venv/
-env/
-
-# uv
-# (keep uv.lock tracked; ignore cache)
-.uv-cache/
-
-# Editors
+# macOS and editors
+.DS_Store
 .vscode/
 .idea/
 *.swp
-.DS_Store
 
-# Project-specific
-.imgsearch/
-model_cache/
-*.faiss
-!tests/fixtures/**
+# Build products
+dist/
+macos/.build/
+macos/.swiftpm/
 
-# Image directories
-images/
-imgs/
-pics/
-
-# HuggingFace cache (local dev)
-.hf_cache/
-
-# Desktop app local runtimes, models, and build products
+# Local caches, converted models and their source weights
 .cache/
 .runtime/
 models/
-macos/.build/
-macos/.swiftpm/
+
+# Search indexes the app keeps next to photos
+.imgsearch/
+
+# Model conversion (Python, build time only)
+__pycache__/
+*.py[cod]

@@ -20,12 +20,12 @@ cat >"$PLIST" <<PLIST
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>CFBundleName</key><string>ImageSearch</string>
-  <key>CFBundleDisplayName</key><string>ImageSearch</string>
-  <key>CFBundleIdentifier</key><string>local.imgsearch.desktop</string>
+  <key>CFBundleName</key><string>Curio</string>
+  <key>CFBundleDisplayName</key><string>Curio</string>
+  <key>CFBundleIdentifier</key><string>local.curio.desktop</string>
   <key>CFBundleVersion</key><string>$VERSION</string>
   <key>CFBundleShortVersionString</key><string>$VERSION</string>
-  <key>CFBundleExecutable</key><string>ImageSearch</string>
+  <key>CFBundleExecutable</key><string>Curio</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleIconFile</key><string>AppIcon</string>
   <key>LSMinimumSystemVersion</key><string>14.0</string>
@@ -49,8 +49,8 @@ PLIST
 # plutil escapes the values, so paths and addresses with & or < are safe.
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --project-root) plutil -insert ImageSearchProjectRoot -string "$2" "$PLIST" ;;
-    --models-url) plutil -insert ImageSearchModelsURL -string "$2" "$PLIST" ;;
+    --project-root) plutil -insert CurioProjectRoot -string "$2" "$PLIST" ;;
+    --models-url) plutil -insert CurioModelsURL -string "$2" "$PLIST" ;;
     *) echo "info-plist.sh: unknown option $1" >&2; exit 1 ;;
   esac
   shift 2

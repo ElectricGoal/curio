@@ -1,57 +1,51 @@
 #!/bin/bash
-# Builds a self-contained ImageSearch.app and wraps it in a disk image that can
+# Builds a self-contained Curio.app and wraps it in a disk image that can
 # be attached to a GitHub release.
 #
 #   bash scripts/build-dmg.sh
 #
 # Unlike build-app.sh, the result does not depend on this checkout: the app is
 # one Swift binary plus the Core ML models listed in BUNDLE_MODELS, and it
-# keeps its settings in ~/Library/Application Support/ImageSearch. No Python.
+# keeps its settings in ~/Library/Application Support/Curio. No Python.
 #
 # Optional environment:
 #   APP_VERSION          version to stamp (default: macos/VERSION)
 #   BUNDLE_MODELS        models to ship inside the app, space separated
-#                        (default: clip-vit-b32). MobileCLIP-S4 is left out by
-#                        default because Apple licenses its weights for
-#                        research use only; add it only if that fits how you
-#                        distribute the app: BUNDLE_MODELS="mobileclip-s4 clip-vit-b32"
-#   MODELS_URL           address serving models/coreml/, from which the app
-#                        may download models it does not carry
+#                        (default: none; the app asks to download one on first
+#                        launch from huggingface.co/ElectricGoal/curio-models)
+#   MODELS_URL           another address serving models/coreml/ to download
+#                        from (default: that Hugging Face repository)
 #   CODESIGN_IDENTITY    "Developer ID Application: …" to sign for distribution
 #                        (default: ad-hoc; Gatekeeper will warn on other Macs)
 #   NOTARY_PROFILE       notarytool keychain profile; notarises and staples the
 #                        disk image (needs CODESIGN_IDENTITY)
 set -euo pipefail
 source "$(dirname "$0")/env.sh"
-cd "$IMGSEARCH_PROJECT_ROOT"
+cd "$CURIO_PROJECT_ROOT"
 
 VERSION="${APP_VERSION:-$(cat macos/VERSION)}"
 ARCH="$(uname -m)"
-STAGE="$IMGSEARCH_PROJECT_ROOT/dist/standalone"
-APP="$STAGE/ImageSearch.app"
+STAGE="$CURIO_PROJECT_ROOT/dist/standalone"
+APP="$STAGE/Curio.app"
 RESOURCES="$APP/Contents/Resources"
-DMG="$IMGSEARCH_PROJECT_ROOT/dist/ImageSearch-$VERSION-$ARCH.dmg"
-read -r -a MODELS <<<"${BUNDLE_MODELS-clip-vit-b32}"
+DMG="$CURIO_PROJECT_ROOT/dist/Curio-$VERSION-$ARCH.dmg"
+read -r -a MODELS <<<"${BUNDLE_MODELS-}"
 
 step() { printf '\n==> %s\n' "$1"; }
 
 if [[ "$ARCH" != "arm64" ]]; then
-  echo "ImageSearch only runs on Apple Silicon; build on an arm64 Mac." >&2
-  exit 1
-fi
-if [[ ${#MODELS[@]} -eq 0 && -z "${MODELS_URL:-}" ]]; then
-  echo "With no BUNDLE_MODELS and no MODELS_URL the app would have no model to search with." >&2
+  echo "Curio only runs on Apple Silicon; build on an arm64 Mac." >&2
   exit 1
 fi
 
 step "Building the app ($VERSION)"
 mkdir -p .cache/clang .cache/swift
-export CLANG_MODULE_CACHE_PATH="$IMGSEARCH_PROJECT_ROOT/.cache/clang"
-export SWIFTPM_MODULECACHE_OVERRIDE="$IMGSEARCH_PROJECT_ROOT/.cache/swift"
+export CLANG_MODULE_CACHE_PATH="$CURIO_PROJECT_ROOT/.cache/clang"
+export SWIFTPM_MODULECACHE_OVERRIDE="$CURIO_PROJECT_ROOT/.cache/swift"
 swift build --package-path macos -c release
 rm -rf "$STAGE"
 mkdir -p "$APP/Contents/MacOS" "$RESOURCES"
-cp macos/.build/release/ImageSearch "$APP/Contents/MacOS/ImageSearch"
+cp macos/.build/release/Curio "$APP/Contents/MacOS/Curio"
 cp macos/AppIcon.icns "$RESOURCES/AppIcon.icns"
 if [[ -n "${MODELS_URL:-}" ]]; then
   bash scripts/info-plist.sh "$APP" "$VERSION" --models-url "$MODELS_URL"
@@ -88,23 +82,23 @@ step "Checking the app works without this checkout"
 # here can reach the checkout, so the app must index and search with only what
 # is inside it.
 if [[ ${#MODELS[@]} -gt 0 ]]; then
-  SELF_TEST_DATA="$(mktemp -d "$TMPDIR/imagesearch-self-test.XXXXXX")"
-  (cd / && env -i HOME="$HOME" PATH=/usr/bin:/bin IMGSEARCH_DATA_ROOT="$SELF_TEST_DATA" \
-    "$APP/Contents/MacOS/ImageSearch" --self-test | sed 's/^/  /')
+  SELF_TEST_DATA="$(mktemp -d "$TMPDIR/curio-self-test.XXXXXX")"
+  (cd / && env -i HOME="$HOME" PATH=/usr/bin:/bin CURIO_DATA_ROOT="$SELF_TEST_DATA" \
+    "$APP/Contents/MacOS/Curio" --self-test | sed 's/^/  /')
   rm -rf "$SELF_TEST_DATA"
 else
-  echo "  skipped: this build carries no model and downloads them from $MODELS_URL"
+  echo "  skipped: this build carries no model; it downloads one on first launch"
 fi
 
 step "Creating the disk image"
 IMAGE_ROOT="$STAGE/image"
 rm -rf "$IMAGE_ROOT" "$DMG"
 mkdir -p "$IMAGE_ROOT"
-mv "$APP" "$IMAGE_ROOT/ImageSearch.app"
+mv "$APP" "$IMAGE_ROOT/Curio.app"
 ln -s /Applications "$IMAGE_ROOT/Applications"
-hdiutil create -volname "ImageSearch $VERSION" -srcfolder "$IMAGE_ROOT" -fs HFS+ \
+hdiutil create -volname "Curio $VERSION" -srcfolder "$IMAGE_ROOT" -fs HFS+ \
   -format ULMO -ov "$DMG" >/dev/null
-mv "$IMAGE_ROOT/ImageSearch.app" "$APP"
+mv "$IMAGE_ROOT/Curio.app" "$APP"
 rm -rf "$IMAGE_ROOT"
 
 if [[ -n "${NOTARY_PROFILE:-}" ]]; then

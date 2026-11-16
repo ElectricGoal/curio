@@ -10,7 +10,7 @@
 # Face on first use (about 1.8 GB for MobileCLIP-S4, 600 MB for CLIP ViT-B/32).
 set -euo pipefail
 source "$(dirname "$0")/env.sh"
-cd "$IMGSEARCH_PROJECT_ROOT"
+cd "$CURIO_PROJECT_ROOT"
 # Versions known to work together: coremltools 9.0 is tested against torch 2.7.
 uv run --no-project --python 3.11 \
   --with "coremltools==9.0" --with "torch==2.7.0" --with "torchvision==0.22.0" \

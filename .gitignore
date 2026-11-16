@@ -15,7 +15,7 @@ macos/.swiftpm/
 models/
 
 # Search indexes the app keeps next to photos
-.imgsearch/
+.curio/
 
 # Model conversion (Python, build time only)
 __pycache__/

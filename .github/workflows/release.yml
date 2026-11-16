@@ -20,12 +20,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # uv is only used to convert the models to Core ML; the app has no Python.
-      - uses: astral-sh/setup-uv@v5
-
-      - name: Convert the bundled model
-        run: bash scripts/convert-models.sh clip-vit-b32
-
       - name: Run the tests
         run: |
           source scripts/env.sh
@@ -44,5 +38,5 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" dist/ImageSearch-*.dmg \
-            --title "ImageSearch ${GITHUB_REF_NAME#v}" --generate-notes
+          gh release create "$GITHUB_REF_NAME" dist/Curio-*.dmg \
+            --title "Curio ${GITHUB_REF_NAME#v}" --generate-notes

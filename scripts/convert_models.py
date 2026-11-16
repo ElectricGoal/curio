@@ -14,7 +14,7 @@ For each model this writes models/coreml/<alias>/ containing:
   files.json        every file a download needs, with its size and SHA-256
 
 To let the app download a model, serve models/coreml/ from any static host and
-give the app that address (ImageSearchModelsURL; see scripts/build-dmg.sh).
+give the app that address (CurioModelsURL; see scripts/build-dmg.sh).
 
 Weights are float16: on the GPU that reproduced PyTorch's search rankings
 exactly in our benchmark, at half the size and well over the speed.
@@ -212,7 +212,7 @@ def convert(alias: str, hub: Path, out: Path) -> None:
             convert_to="mlprogram", compute_precision=ct.precision.FLOAT16,
             minimum_deployment_target=ct.target.macOS14,
         )
-        model.author = "Converted for ImageSearch"
+        model.author = "Converted for Curio"
         model.license = spec["license"]
         model.save(str(target / f"{name}.mlpackage"))
 

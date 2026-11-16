@@ -15,7 +15,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
     exit(
       await SelfTest.run(
-        installation: AppEnvironment.installation, bundledModels: AppEnvironment.bundledModels))
+        installation: AppEnvironment.installation, bundledModels: AppEnvironment.bundledModels,
+        shaders: AppEnvironment.shaders))
   }
 }
 
@@ -35,6 +36,11 @@ enum AppEnvironment {
         for: .applicationSupportDirectory, in: .userDomainMask
       ).first ?? FileManager.default.homeDirectoryForCurrentUser,
       currentDirectory: URL(fileURLWithPath: FileManager.default.currentDirectoryPath))
+  }
+
+  /// MLX's compiled Metal shaders: inside the app, or in a source checkout's build folder.
+  static var shaders: URL? {
+    MLXShaders.locate(environment: environment, projectRoot: installation.dataRoot)
   }
 
   /// Models shipped inside the app bundle.
@@ -65,12 +71,14 @@ struct CurioApp: App {
     // Without this, launching the app *with* a folder would not show the window.
     .handlesExternalEvents(matching: ["*"])
     .defaultSize(width: 1280, height: 820)
+    // No title bar: the window's buttons sit on the app's own top row, beside its name.
+    .windowStyle(.hiddenTitleBar)
 
-    // Models are an app-wide setting, so they live where macOS puts settings: ⌘,
-    Settings {
-      SettingsView().environmentObject(studio)
-    }
     .commands {
+      // Everything lives in the one window: ⌘, goes to its Settings page instead of opening another.
+      CommandGroup(replacing: .appSettings) {
+        Button("Settings…") { studio.page = .settings }.keyboardShortcut(",")
+      }
       CommandGroup(replacing: .newItem) {
         Button("Open Folder…") { studio.chooseFolder() }.keyboardShortcut("o")
         Menu("Open Recent") {

@@ -80,7 +80,8 @@ public struct ModelLibrary: Sendable {
         installed: directory != nil, available: obtainable,
         availabilityMessage: obtainable ? "" : Self.notIncluded(entry.alias),
         // Only what the user could free by removing it.
-        size: Self.size(of: installDirectory.appendingPathComponent(entry.alias)))
+        size: Self.size(of: installDirectory.appendingPathComponent(entry.alias)),
+        source: remote.flatMap { ModelSource(downloadBase: $0.appendingPathComponent(entry.alias)) })
     }
   }
 
@@ -112,8 +113,6 @@ public struct ModelLibrary: Sendable {
     guard let remote else { throw EngineError.failed(Self.notIncluded(alias)) }
     let base = remote.appendingPathComponent(alias)
     let notValid = EngineError.failed("The download for \(entry.name) is not valid.")
-    let damaged = EngineError.failed(
-      "The download for \(entry.name) was damaged in transit. Try again.")
     let listing: [RemoteFile]
     do {
       try Self.checkCancelled()
@@ -128,7 +127,25 @@ public struct ModelLibrary: Sendable {
         "Could not reach the download for \(entry.name). Check your internet connection and try again."
       )
     }
-    // The listing comes from the network: nothing in it is trusted until checked.
+    try await Self.download(
+      listing, from: base, name: entry.name, alias: alias, into: installDirectory,
+      onProgress: onProgress
+    ) { staging in
+      guard try ModelManifest.load(from: staging).alias == alias else { throw notValid }
+    }
+  }
+
+  /// Downloads `listing` from `base` into `directory/alias`: every file is
+  /// checked against its size and checksum, `accept` has the last word on the
+  /// complete set, and only then does it replace what was there.
+  static func download(
+    _ listing: [RemoteFile], from base: URL, name: String, alias: String, into directory: URL,
+    onProgress: @escaping @Sendable (_ done: Int64, _ total: Int64) -> Void,
+    accept: (URL) throws -> Void
+  ) async throws {
+    let notValid = EngineError.failed("The download for \(name) is not valid.")
+    let damaged = EngineError.failed("The download for \(name) was damaged in transit. Try again.")
+    // A listing may come from the network: nothing in it is trusted until checked.
     let sizesAreSane = listing.allSatisfy { (0...Self.largestDownload).contains($0.size) }
     let pathsStayInside = listing.allSatisfy {
       !$0.path.isEmpty && !$0.path.hasPrefix("/") && !$0.path.split(separator: "/").contains("..")
@@ -138,9 +155,9 @@ public struct ModelLibrary: Sendable {
     guard total <= Self.largestDownload else { throw notValid }
 
     let manager = FileManager.default
-    Self.removeLeftovers(of: alias, in: installDirectory)
-    let staging = installDirectory.appendingPathComponent(
-      Self.stagingPrefix(alias) + UUID().uuidString)
+    try manager.createDirectory(at: directory, withIntermediateDirectories: true)
+    Self.removeLeftovers(of: alias, in: directory)
+    let staging = directory.appendingPathComponent(Self.stagingPrefix(alias) + UUID().uuidString)
     defer { try? manager.removeItem(at: staging) }
     var done: Int64 = 0
     onProgress(0, total)
@@ -163,8 +180,8 @@ public struct ModelLibrary: Sendable {
       onProgress(done, total)
     }
     try Self.checkCancelled()
-    guard try ModelManifest.load(from: staging).alias == alias else { throw notValid }
-    try Self.put(staging, inPlaceOf: installDirectory.appendingPathComponent(alias))
+    try accept(staging)
+    try Self.put(staging, inPlaceOf: directory.appendingPathComponent(alias))
   }
 
   private static func stagingPrefix(_ alias: String) -> String { ".download-\(alias)-" }

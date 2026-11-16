@@ -14,7 +14,7 @@ enum SelfTest {
   ]
 
   /// Runs the test and returns the process exit code.
-  static func run(installation: Installation, bundledModels: URL?) async -> Int32 {
+  static func run(installation: Installation, bundledModels: URL?, shaders: URL?) async -> Int32 {
     let scratch = FileManager.default.temporaryDirectory
       .appendingPathComponent("curio-self-test-" + UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: scratch) }
@@ -24,6 +24,10 @@ enum SelfTest {
       for colour in colours {
         try write(colour, to: photos.appendingPathComponent(colour.name + ".png"))
       }
+      // First what needs no model: every copy of the app must be able to use the GPU through MLX.
+      guard let shaders else { throw EngineError.failed("this app is missing its GPU shaders (mlx.metallib)") }
+      try D1DecisionModel.checkGPU(shaders: shaders)
+      print("self-test: MLX computes on the GPU with the app's shaders")
       // Models come from this copy of the app; everything written goes to scratch.
       let library = ModelLibrary(
         installDirectory: installation.dataRoot.appendingPathComponent("models/coreml"),
@@ -61,12 +65,36 @@ enum SelfTest {
         let seconds = String(format: "%.1f", Date().timeIntervalSince(started))
         print("self-test: \(model.name) indexed \(indexed.count) images and found each by description (\(seconds)s)")
       }
+      try await checkDecisions(installation: installation, shaders: shaders, photos: photos)
       print("self-test passed")
       return 0
     } catch {
       print("self-test FAILED: \(error.localizedDescription)")
       return 1
     }
+  }
+
+  /// Careful filter steps: the decision model is asked only where it has been downloaded.
+  private static func checkDecisions(installation: Installation, shaders: URL, photos: URL) async throws {
+    let library = DecisionLibrary(installDirectory: installation.dataRoot.appendingPathComponent("models/mlx"))
+    let alias = DecisionCatalog.defaultAlias
+    guard let directory = library.directory(for: alias) else {
+      print("self-test: the decision model is not installed; careful filter steps were not exercised")
+      return
+    }
+    let started = Date()
+    let model = try await D1DecisionModel.load(alias: alias, directory: directory, shaders: shaders)
+    let question = "Is this image a solid red square?"
+    for colour in colours {
+      let answer = try await model.decide(
+        image: photos.appendingPathComponent(colour.name + ".png"), questions: [question])
+      guard let probability = answer.first, (probability >= 0.5) == (colour.name == "red") else {
+        throw EngineError.failed(
+          "\(alias) answered “\(question)” with \(answer.first.map { String(format: "%.2f", $0) } ?? "nothing") for the \(colour.name) square")
+      }
+    }
+    let seconds = String(format: "%.1f", Date().timeIntervalSince(started))
+    print("self-test: \(DecisionCatalog.entry(alias)?.name ?? alias) told the red square from the others (\(seconds)s)")
   }
 
   private static func write(

@@ -16,9 +16,15 @@ permissions:
 
 jobs:
   disk-image:
-    runs-on: macos-15 # Apple Silicon
+    # Apple Silicon. MLX (the decision model's runtime) needs Swift 6.3, so Xcode 26.4 or later.
+    runs-on: macos-26
     steps:
       - uses: actions/checkout@v4
+
+      - name: Make sure the Metal compiler is installed
+        run: |
+          swift --version
+          xcrun -sdk macosx -f metal || xcodebuild -downloadComponent MetalToolchain
 
       - name: Run the tests
         run: |

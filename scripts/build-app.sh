@@ -11,9 +11,12 @@ mkdir -p .cache/clang .cache/swift
 export CLANG_MODULE_CACHE_PATH="$CURIO_PROJECT_ROOT/.cache/clang"
 export SWIFTPM_MODULECACHE_OVERRIDE="$CURIO_PROJECT_ROOT/.cache/swift"
 swift build --package-path macos -c release
+# The decision model runs on MLX, whose GPU shaders `swift build` does not compile.
+bash scripts/build-mlx-shaders.sh
 APP="$CURIO_PROJECT_ROOT/dist/Curio.app"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp macos/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
+cp macos/.build/mlx.metallib "$APP/Contents/Resources/mlx.metallib"
 cp macos/.build/release/Curio "$APP/Contents/MacOS/Curio"
 bash scripts/info-plist.sh "$APP" "${APP_VERSION:-$(cat macos/VERSION)}" \
   --project-root "$CURIO_PROJECT_ROOT"

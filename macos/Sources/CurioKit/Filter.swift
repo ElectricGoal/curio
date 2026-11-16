@@ -24,18 +24,46 @@ public struct FilterStep: Codable, Equatable, Identifiable, Sendable {
       case .strict: return 0.035
       }
     }
+
+    // shortcut: set from 83 sample images with d1-2B, where every clear match
+    // scored above 0.5 and no clear miss did; tune on real libraries if needed.
+    /// How sure the decision model must be that an image fits the description.
+    var confidence: Double {
+      switch self {
+      case .loose: return 0.3
+      case .balanced: return 0.5
+      case .strict: return 0.8
+      }
+    }
   }
 
   public var id: UUID
   public var action: Action
   public var text: String
   public var strictness: Strictness
+  /// Whether the decision model looks at each image for this step. Slower and
+  /// more accurate than matching the description against the search index.
+  public var careful: Bool
 
-  public init(id: UUID = UUID(), action: Action, text: String, strictness: Strictness = .balanced) {
+  public init(
+    id: UUID = UUID(), action: Action, text: String, strictness: Strictness = .balanced,
+    careful: Bool = false
+  ) {
     self.id = id
     self.action = action
     self.text = text
     self.strictness = strictness
+    self.careful = careful
+  }
+
+  public init(from decoder: Decoder) throws {
+    let values = try decoder.container(keyedBy: CodingKeys.self)
+    id = try values.decode(UUID.self, forKey: .id)
+    action = try values.decode(Action.self, forKey: .action)
+    text = try values.decode(String.self, forKey: .text)
+    strictness = try values.decode(Strictness.self, forKey: .strictness)
+    // Steps saved before careful steps existed are plain ones.
+    careful = try values.decodeIfPresent(Bool.self, forKey: .careful) ?? false
   }
 
   /// Steps without words do nothing yet.
@@ -43,6 +71,11 @@ public struct FilterStep: Codable, Equatable, Identifiable, Sendable {
 
   /// The description phrased the way CLIP matches best.
   public var prompt: String { Labels.album(text.trimmingCharacters(in: .whitespaces)).prompt }
+
+  /// The description as a yes/no question for the decision model.
+  public var question: String {
+    "Does this image match the description “\(text.trimmingCharacters(in: .whitespaces))”?"
+  }
 }
 
 /// What a filter chain did to a folder, stage by stage.
@@ -52,6 +85,15 @@ public struct FilterRun: Equatable, Sendable {
     public let remaining: [String]
     /// Images this step took out.
     public let dropped: [String]
+    /// Images a careful step judged by description alone, because the
+    /// decision model has not looked at them yet.
+    public let unchecked: [String]
+
+    public init(remaining: [String], dropped: [String], unchecked: [String] = []) {
+      self.remaining = remaining
+      self.dropped = dropped
+      self.unchecked = unchecked
+    }
   }
 
   /// Compared with every step: an image matches a description when it fits it
@@ -68,7 +110,13 @@ public struct FilterRun: Equatable, Sendable {
   /// Runs `steps` over images scored against `baseline` first, then one prompt
   /// per active step, in order. With `among`, images not in it (moved or
   /// deleted since indexing) are left out from the start.
-  public init(steps: [FilterStep], scores: PromptScores, among: Set<String>? = nil) {
+  ///
+  /// A careful step goes by the decision model's answer in `decisions` for
+  /// each image that has one, and by the description for the rest.
+  public init(
+    steps: [FilterStep], scores: PromptScores, decisions: DecisionScores? = nil,
+    among: Set<String>? = nil
+  ) {
     let width = scores.prompts
     let rows = scores.paths.indices
     let base = rows.map { scores.scores[$0 * width] }
@@ -83,13 +131,27 @@ public struct FilterRun: Equatable, Sendable {
       }
       let lead = step.strictness.lead
       let index = column
-      let matches = { (row: Int) in scores.scores[row * width + index] - base[row] >= lead }
+      let confidence = step.strictness.confidence
+      let asked = step.careful ? decisions?.questions.firstIndex(of: step.question) : nil
+      let verdict = { (row: Int) -> Double? in
+        guard let asked, let own = decisions?.answers[scores.paths[row]] else { return nil }
+        return own[asked]
+      }
+      let matches = { (row: Int) -> Bool in
+        if let probability = verdict(row) { return probability >= confidence }
+        return scores.scores[row * width + index] - base[row] >= lead
+      }
+      let unreadable = Set(decisions?.unreadable ?? [])
+      let unchecked =
+        step.careful
+        ? current.filter { verdict($0) == nil && !unreadable.contains(scores.paths[$0]) } : []
       let kept = current.filter { step.action == .keep ? matches($0) : !matches($0) }
       let keptSet = Set(kept)
       stages.append(
         Stage(
           remaining: kept.map { scores.paths[$0] },
-          dropped: current.filter { !keptSet.contains($0) }.map { scores.paths[$0] }))
+          dropped: current.filter { !keptSet.contains($0) }.map { scores.paths[$0] },
+          unchecked: unchecked.map { scores.paths[$0] }))
       current = kept
       column += 1
     }

@@ -1,5 +1,13 @@
 import Foundation
 
+/// Whether the app is shown light, dark, or as macOS is set.
+public enum Appearance: String, Codable, CaseIterable, Identifiable, Sendable {
+  case system, light, dark
+
+  public var id: String { rawValue }
+  public var label: String { rawValue.capitalized }
+}
+
 /// Settings remembered between launches.
 public struct Preferences: Codable, Equatable, Sendable {
   public static let defaultModel = "mobileclip-s4"
@@ -15,11 +23,12 @@ public struct Preferences: Codable, Equatable, Sendable {
   public var albums: [String]
   /// The filter chain, kept between launches.
   public var filterSteps: [FilterStep]
+  public var appearance: Appearance
 
   public init(
     model: String = Preferences.defaultModel, folder: String? = nil,
     recentFolders: [String] = [], thumbnailSize: Double = 180, sort: PhotoSort = .name,
-    albums: [String] = [], filterSteps: [FilterStep] = []
+    albums: [String] = [], filterSteps: [FilterStep] = [], appearance: Appearance = .system
   ) {
     self.model = model
     self.folder = folder
@@ -28,6 +37,7 @@ public struct Preferences: Codable, Equatable, Sendable {
     self.sort = sort
     self.albums = albums
     self.filterSteps = filterSteps
+    self.appearance = appearance
   }
 
   /// Tolerates files written by earlier versions, which stored fewer keys.
@@ -44,6 +54,8 @@ public struct Preferences: Codable, Equatable, Sendable {
     sort = storedSort.flatMap(PhotoSort.init) ?? fallback.sort
     albums = try values.decodeIfPresent([String].self, forKey: .albums) ?? []
     filterSteps = (try? values.decodeIfPresent([FilterStep].self, forKey: .filterSteps)) ?? []
+    let storedAppearance = try? values.decodeIfPresent(String.self, forKey: .appearance)
+    appearance = storedAppearance.flatMap(Appearance.init) ?? .system
   }
 
   /// A copy with `path` as the current folder and at the front of the recents.

@@ -47,6 +47,9 @@ rm -rf "$STAGE"
 mkdir -p "$APP/Contents/MacOS" "$RESOURCES"
 cp macos/.build/release/Curio "$APP/Contents/MacOS/Curio"
 cp macos/AppIcon.icns "$RESOURCES/AppIcon.icns"
+# The decision model runs on MLX, whose GPU shaders `swift build` does not compile.
+bash scripts/build-mlx-shaders.sh
+cp macos/.build/mlx.metallib "$RESOURCES/mlx.metallib"
 if [[ -n "${MODELS_URL:-}" ]]; then
   bash scripts/info-plist.sh "$APP" "$VERSION" --models-url "$MODELS_URL"
 else

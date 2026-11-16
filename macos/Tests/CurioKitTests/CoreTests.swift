@@ -192,3 +192,16 @@ final class EngineDiagnosisTests: XCTestCase {
     XCTAssertEqual(EngineDiagnosis.message(for: EngineError.busy("indexing")), "indexing")
   }
 }
+
+final class AppearancePreferenceTests: XCTestCase {
+  func testAppearanceDefaultsToTheSystemAndSurvivesSaving() throws {
+    XCTAssertEqual(Preferences().appearance, .system)
+    let older = try JSONDecoder().decode(Preferences.self, from: Data(#"{"model":"clip-vit-b32"}"#.utf8))
+    XCTAssertEqual(older.appearance, .system, "files from before the setting existed")
+    let odd = try JSONDecoder().decode(Preferences.self, from: Data(#"{"appearance":"sepia"}"#.utf8))
+    XCTAssertEqual(odd.appearance, .system, "a value this version does not know")
+    let saved = try JSONEncoder().encode(Preferences(appearance: .dark))
+    XCTAssertEqual(try JSONDecoder().decode(Preferences.self, from: saved).appearance, .dark)
+    XCTAssertEqual(Appearance.allCases.map(\.label), ["System", "Light", "Dark"])
+  }
+}

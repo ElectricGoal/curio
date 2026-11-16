@@ -172,10 +172,13 @@ public struct ModelInfo: Decodable, Sendable, Equatable, Identifiable {
   public let available: Bool
   public let availabilityMessage: String
   public let size: Int64
+  /// Where its files are downloaded from; nil when this copy of the app has nowhere to get them.
+  public let source: ModelSource?
 
   public init(
     alias: String, id: String, name: String, family: String, summary: String, isDefault: Bool,
-    installed: Bool, available: Bool, availabilityMessage: String, size: Int64
+    installed: Bool, available: Bool, availabilityMessage: String, size: Int64,
+    source: ModelSource? = nil
   ) {
     self.alias = alias
     self.id = id
@@ -187,21 +190,64 @@ public struct ModelInfo: Decodable, Sendable, Equatable, Identifiable {
     self.available = available
     self.availabilityMessage = availabilityMessage
     self.size = size
+    self.source = source
   }
 
   enum CodingKeys: String, CodingKey {
-    case alias, id, name, family, summary, installed, available, availabilityMessage, size
+    case alias, id, name, family, summary, installed, available, availabilityMessage, size, source
     case isDefault = "default"
   }
 }
 
 public struct ModelsResponse: Decodable, Sendable, Equatable {
+  /// The models that power search; a folder is indexed with one of them.
   public let models: [ModelInfo]
   public let storage: String
+  /// Models that answer filter steps by looking at each image.
+  public let decision: [ModelInfo]
 
-  public init(models: [ModelInfo], storage: String) {
+  public init(models: [ModelInfo], storage: String, decision: [ModelInfo] = []) {
     self.models = models
     self.storage = storage
+    self.decision = decision
+  }
+
+  enum CodingKeys: String, CodingKey { case models, storage, decision }
+
+  public init(from decoder: Decoder) throws {
+    let values = try decoder.container(keyedBy: CodingKeys.self)
+    models = try values.decode([ModelInfo].self, forKey: .models)
+    storage = try values.decode(String.self, forKey: .storage)
+    decision = try values.decodeIfPresent([ModelInfo].self, forKey: .decision) ?? []
+  }
+}
+
+/// What the decision model has said about a set of images.
+public struct DecisionScores: Sendable, Equatable {
+  public let model: String
+  public let questions: [String]
+  /// For each image (absolute path) with at least one answer: how likely "yes"
+  /// is for each question, in order; nil where it has not been asked or the
+  /// image could not be read.
+  public let answers: [String: [Double?]]
+  /// Images still waiting for an answer to at least one question.
+  public let unanswered: [String]
+  /// Images the model could not read; asking again will not help until they change.
+  public let unreadable: [String]
+
+  public init(
+    model: String, questions: [String], answers: [String: [Double?]], unanswered: [String] = [],
+    unreadable: [String] = []
+  ) {
+    self.model = model
+    self.questions = questions
+    self.answers = answers
+    self.unanswered = unanswered
+    self.unreadable = unreadable
+  }
+
+  public static func empty(model: String, questions: [String]) -> DecisionScores {
+    DecisionScores(model: model, questions: questions, answers: [:])
   }
 }
 

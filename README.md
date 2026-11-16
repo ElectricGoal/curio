@@ -14,7 +14,7 @@ Requires an Apple Silicon Mac with macOS 14 or later.
 2. Open it and drag **Curio** to **Applications**.
 3. Open the app. It is not yet notarised by Apple, so the first time macOS will refuse: go to **System Settings › Privacy & Security**, scroll to the message about Curio, and choose **Open Anyway**. (Or run `xattr -dr com.apple.quarantine /Applications/Curio.app` once.)
 
-The app itself is about 5 MB. On first launch Curio asks which search model to download — **MobileCLIP-S4** (recommended, about 890 MB) or the lighter **CLIP ViT-B/32** (about 300 MB) — from [huggingface.co/ElectricGoal/curio-models](https://huggingface.co/ElectricGoal/curio-models). Each file is checked against its checksum. You can browse right away and choose **Not Now** to download later; after that, Curio needs no network.
+The app itself is about 6 MB. On first launch Curio asks which search model to download — **MobileCLIP-S4** (recommended, about 890 MB) or the lighter **CLIP ViT-B/32** (about 300 MB) — from [huggingface.co/ElectricGoal/curio-models](https://huggingface.co/ElectricGoal/curio-models). Each file is checked against its checksum. You can browse right away and choose **Not Now** to download later; after that, Curio needs no network.
 
 ## Features
 
@@ -47,6 +47,8 @@ The app itself is about 5 MB. On first launch Curio asks which search model to d
 - Every step shows how many images went in and how many it took out; click a step to preview what is left after it, or what it removed. **Strictness** (Loose, Balanced, Strict) sets how clearly an image must match.
 - Choose a folder, or make one with **New Folder…**, and **Copy** or **Move** the result there. Nothing is overwritten: a clashing name gets a number. The chain is remembered for next time.
 - Short, concrete descriptions work best. Image quality ("blurry", "artifacts") is the model's weakest area, so check those steps in the preview.
+- For a step that has to be right, tick **Look at each image**. A second model, [Liquid d1-2B](https://huggingface.co/LiquidAI/d1-2B), then looks at every image reaching that step and answers it with yes or no, instead of the step being matched by description. On 83 mixed test images it kept every real "photo of people" where matching by description found 4 of 24, and it did not mistake logos and icons for "a product on a white background".
+- Looking is slow — about a third of a second per image on an M4, so a few minutes per thousand — and starts only when you press **Look Now**. You can pause at any time: each answer is kept with the folder, so an image is only ever looked at once per step.
 
 ### Index once, stay current
 
@@ -68,18 +70,21 @@ The app itself is about 5 MB. On first launch Curio asks which search model to d
 
 ### Models
 
-- Uses **MobileCLIP-S4** by default for the best search quality. The lighter, faster **OpenAI CLIP ViT-B/32** is available too; download, switch or remove either in **Settings** (⌘,), or from **Models…** at the bottom of the sidebar.
+- Uses **MobileCLIP-S4** by default for the best search quality. The lighter, faster **OpenAI CLIP ViT-B/32** is available too; download, switch or remove either in **Settings** (the gear at the right of the footer, or ⌘,).
+- Settings says where each model is downloaded from, with a link to the page listing its files.
 - Each folder remembers the model it was indexed with. Switching models only affects new indexes, or a **Rebuild Index** from the ⋯ menu; cancelling a rebuild keeps the old index.
+- **Liquid d1-2B**, for careful filter steps, is optional: about 2.2 GB, downloaded in Settings straight from [Liquid AI's own repository](https://huggingface.co/LiquidAI/d1-2B-MLX-8bit) and checked file by file. It uses about 3.3 GB of memory while it runs and is released when idle.
 
 ### Private and lightweight
 
-- Everything runs on your Mac with Core ML on the GPU. No account; the network is used only to download a model.
-- Uses about 0.2–0.4 GB of memory and is ready to search a fraction of a second after launch.
-- Follows the system's light or dark appearance in a clean, monochrome style.
+- Everything runs on your Mac's GPU, inside the app: search with Core ML, careful filter steps with MLX. No account; the network is used only to download a model.
+- Search uses about 0.2–0.4 GB of memory and is ready a fraction of a second after launch.
+- A clean, monochrome style that follows your Mac's light or dark appearance, or stays light or dark if you choose one in **Settings**. Everything is in one window, with no title bar.
+- A footer along the bottom shows the running task with its progress and a Pause button, then the number of images, what is searchable, the model in use, and the gear for Settings.
 
 ## Where your data lives
 
-- **Search indexes** stay with your photos: one file in each folder's hidden `.curio` directory. Delete it to remove the index; your photos are never touched.
+- **Search indexes** stay with your photos: one file in each folder's hidden `.curio` directory. Delete it to remove the index; your photos are never touched. Answers from careful filter steps are kept in a second file beside it.
 - **Settings and downloaded models** live in `~/Library/Application Support/Curio`.
 
 ## Troubleshooting
@@ -89,13 +94,24 @@ The app itself is about 5 MB. On first launch Curio asks which search model to d
 
 ## Build from source
 
-Requires Apple Silicon, macOS 14 or later, Xcode Command Line Tools and [`uv`](https://docs.astral.sh/uv/).
+Requires Apple Silicon, macOS 14 or later, Xcode 26.4 or later with its Metal toolchain (`xcodebuild -downloadComponent MetalToolchain`), and [`uv`](https://docs.astral.sh/uv/).
 
 ```bash
 bash scripts/convert-models.sh   # once: prepares the search models
 bash scripts/launch.sh           # builds and opens dist/Curio.app
 ```
 
+The build is plain `swift build`. MLX's GPU shaders are the one thing that cannot compile, so `scripts/build-mlx-shaders.sh` compiles them into `mlx.metallib`, which the build scripts place inside the app.
+
+The decision model runs on Swift code in `macos/Sources/CurioKit/Engine/Decision`, written from [mlx-vlm](https://github.com/Blaizzy/mlx-vlm)'s implementation. To check it against that reference, download Liquid d1-2B in the app's Settings, then:
+
+```bash
+bash scripts/d1-reference.sh     # writes the reference's tokens, tensors and answers
+bash scripts/check.sh            # the tests compare the Swift model with them
+```
+
 ## License
 
 MIT. MobileCLIP-S4's weights are published by Apple under its own [research licence](https://huggingface.co/apple/MobileCLIP-S4); Curio downloads it from a public copy, so read that licence before using or redistributing it.
+
+Liquid d1-2B is published by Liquid AI under the [LFM Open License v1.0](https://huggingface.co/LiquidAI/d1-2B/blob/main/LICENSE), which does not license commercial use by an organisation with annual revenue of $10 million or more. Curio downloads it from Liquid AI and keeps the licence file with it. The code that runs it is adapted from mlx-vlm (Apache-2.0) and from the reference code shipped with the model.

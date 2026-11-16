@@ -81,6 +81,7 @@ extension Studio {
     }
     let steps = filterSteps
     let prompts = [FilterRun.baseline] + steps.filter(\.isActive).map(\.prompt)
+    let questions = Studio.questions(for: steps)
     let present = Set(library.map(\.path))
     let engine = engine
     isFiltering = true
@@ -91,8 +92,21 @@ extension Studio {
       defer { if generation == filterGeneration { isFiltering = false } }
       do {
         let scores = try await engine.scores(folder: folder, prompts: prompts)
+        // What the decision model has already said; nothing is asked of it here.
+        var decisions: DecisionScores?
+        if !questions.isEmpty {
+          do {
+            decisions = try await engine.decisions(
+              folder: folder, paths: scores.paths.filter(present.contains), questions: questions,
+              asking: false, onProgress: { _ in })
+          } catch {
+            // The chain still runs by description; say why the saved answers are not in it.
+            if generation == filterGeneration { status = EngineDiagnosis.message(for: error) }
+          }
+        }
+        let answered = decisions
         let run = await Task.detached {
-          FilterRun(steps: steps, scores: scores, among: present)
+          FilterRun(steps: steps, scores: scores, decisions: answered, among: present)
         }.value
         guard generation == filterGeneration else { return }
         filterRun = run
@@ -101,6 +115,59 @@ extension Studio {
         guard generation == filterGeneration else { return }
         filterProblem = EngineDiagnosis.message(for: error)
       }
+    }
+  }
+
+  // MARK: - Careful steps
+
+  /// The decision model that answers careful steps, as the model list describes it.
+  var decisionModel: ModelInfo? {
+    decisionModels.first { $0.isDefault } ?? decisionModels.first
+  }
+
+  private static func questions(for steps: [FilterStep]) -> [String] {
+    var seen: Set<String> = []
+    return steps.filter { $0.isActive && $0.careful }.map(\.question).filter { seen.insert($0).inserted }
+  }
+
+  /// Images the step at `index` judged by description because the decision
+  /// model has not looked at them yet.
+  func uncheckedCount(at index: Int) -> Int {
+    guard let run = filterRun, run.stages.indices.contains(index) else { return 0 }
+    return run.stages[index].unchecked.count
+  }
+
+  /// Has the decision model look at the images reaching this step that it has
+  /// not seen yet. Each answer is kept, so stopping part-way loses nothing.
+  func lookAtImages(for id: UUID) {
+    guard let folder, activity == nil, !isFiltering, let run = filterRun,
+      let index = filterSteps.firstIndex(where: { $0.id == id }), run.stages.indices.contains(index),
+      filterSteps[index].careful, filterSteps[index].isActive
+    else { return }
+    let paths = run.stages[index].unchecked
+    let question = filterSteps[index].question
+    guard !paths.isEmpty else { return }
+    let engine = engine
+    Task {
+      if decisionModels.isEmpty { await loadModels() }
+      guard let model = decisionModel, model.installed else {
+        alert = AlertMessage(
+          title: "A model is needed first",
+          message: "Careful steps use \(decisionModel?.name ?? "a decision model"). Download it in Settings.")
+        return
+      }
+      let answered = await perform(.deciding) { progress in
+        try await engine.decisions(
+          folder: folder, paths: paths, questions: [question], asking: true, onProgress: progress)
+      }
+      if let answered {
+        let skipped = answered.unanswered.count + answered.unreadable.count
+        status =
+          "Looked at \(Format.images(paths.count - skipped))"
+          + (skipped == 0 ? "" : " · \(Format.count(skipped)) could not be read")
+      }
+      // Also after stopping part-way: the answers given so far count.
+      runFilter(immediately: true)
     }
   }
 

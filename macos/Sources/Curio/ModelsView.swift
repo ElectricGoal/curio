@@ -2,14 +2,13 @@ import AppKit
 import CurioKit
 import SwiftUI
 
-/// Download, choose and remove the models that power search.
+/// The models section of Settings: download, choose and remove the models the app runs.
 struct ModelsView: View {
   @EnvironmentObject private var studio: Studio
   @State private var deleting: ModelInfo?
 
   var body: some View {
-    ScrollView {
-      VStack(alignment: .leading, spacing: 0) {
+    VStack(alignment: .leading, spacing: 0) {
         Text(
           "A model turns images and words into something comparable. It runs on this Mac, so your images are never sent anywhere. Each folder remembers the model it was indexed with."
         )
@@ -20,6 +19,21 @@ struct ModelsView: View {
         ForEach(studio.models) { model in
           row(model)
           Hairline()
+        }
+        if !studio.decisionModels.isEmpty {
+          Eyebrow(text: "For careful filter steps").padding(.top, Theme.Space.l)
+            .padding(.bottom, Theme.Space.s)
+          Text(
+            "Optional. On the Filter page, a step can have this model look at every image instead of matching by description."
+          )
+          .font(.swissBody).foregroundStyle(Theme.mutedForeground)
+          .frame(maxWidth: 560, alignment: .leading).fixedSize(horizontal: false, vertical: true)
+          .padding(.bottom, Theme.Space.m)
+          Hairline()
+          ForEach(studio.decisionModels) { model in
+            decisionRow(model)
+            Hairline()
+          }
         }
         if studio.models.isEmpty {
           HStack(spacing: Theme.Space.s) {
@@ -36,10 +50,8 @@ struct ModelsView: View {
             }.buttonStyle(SwissButtonStyle(kind: .quiet, compact: true))
           }.padding(.top, Theme.Space.m)
         }
-      }
-      .padding(.horizontal, Theme.gutter).padding(.bottom, Theme.Space.l)
-      .frame(maxWidth: .infinity, alignment: .leading)
     }
+    .frame(maxWidth: .infinity, alignment: .leading)
     .onAppear { if studio.models.isEmpty { studio.refreshModels() } }
     .confirmationDialog(
       "Remove \(deleting?.name ?? "this model")?",
@@ -48,7 +60,10 @@ struct ModelsView: View {
     ) { model in
       Button("Remove \(Format.bytes(model.size))", role: .destructive) { studio.deleteModel(model.alias) }
     } message: { _ in
-      Text("You can download it again later. Your photos and their indexes are kept, but folders indexed with this model cannot be searched until it is back.")
+      Text(
+        studio.decisionModels.contains { $0.alias == deleting?.alias }
+          ? "You can download it again later. The answers it has already given are kept."
+          : "You can download it again later. Your photos and their indexes are kept, but folders indexed with this model cannot be searched until it is back.")
     }
   }
 
@@ -67,6 +82,10 @@ struct ModelsView: View {
           .frame(maxWidth: 520, alignment: .leading).fixedSize(horizontal: false, vertical: true)
         Text(stateLine(model)).font(.swissCaption.monospacedDigit())
           .foregroundStyle(model.installed ? Theme.foreground : Theme.mutedForeground)
+        // A model that came inside the app was not downloaded from anywhere.
+        if let source = model.source, !(model.installed && model.size == 0) {
+          ModelSourceLine(source: source)
+        }
         if !model.availabilityMessage.isEmpty {
           Text(model.availabilityMessage).font(.swissCaption).foregroundStyle(Theme.destructive)
             .textSelection(.enabled)
@@ -97,6 +116,36 @@ struct ModelsView: View {
     }
   }
 
+  /// A decision model: it can be downloaded and removed, but a folder is never indexed with it.
+  private func decisionRow(_ model: ModelInfo) -> some View {
+    HStack(alignment: .top, spacing: Theme.Space.l) {
+      VStack(alignment: .leading, spacing: Theme.Space.xs) {
+        Text(model.name).font(.swissTitle)
+        Text(model.summary).font(.swissBody).foregroundStyle(Theme.mutedForeground)
+          .frame(maxWidth: 520, alignment: .leading).fixedSize(horizontal: false, vertical: true)
+        Text(stateLine(model)).font(.swissCaption.monospacedDigit())
+          .foregroundStyle(model.installed ? Theme.foreground : Theme.mutedForeground)
+        if let source = model.source { ModelSourceLine(source: source) }
+        Text("Published by Liquid AI under the LFM Open License v1.0, which limits commercial use by organisations with annual revenue of $10 million or more.")
+          .font(.swissCaption).foregroundStyle(Theme.mutedForeground)
+          .frame(maxWidth: 520, alignment: .leading).fixedSize(horizontal: false, vertical: true)
+      }
+      Spacer(minLength: Theme.Space.m)
+      HStack(spacing: Theme.Space.s) {
+        if !model.installed {
+          Button("Download") { studio.downloadModel(model.alias) }
+            .buttonStyle(.swissPrimary).disabled(studio.activity != nil)
+        }
+        if model.size > 0 {
+          Button("Remove") { deleting = model }
+            .buttonStyle(SwissButtonStyle(kind: .quiet, destructive: true))
+            .disabled(studio.activity != nil).help("Remove this model's files")
+        }
+      }
+    }
+    .padding(.vertical, Theme.Space.m).padding(.leading, Theme.Space.m)
+  }
+
   private func stateLine(_ model: ModelInfo) -> String {
     if model.installed {
       // Models inside the app take no space the user could free.
@@ -104,5 +153,25 @@ struct ModelsView: View {
     }
     if model.size > 0 { return "Partly downloaded · \(Format.bytes(model.size))" }
     return "Not installed"
+  }
+}
+
+/// Where a model's files come from, linking to the page that lists them.
+struct ModelSourceLine: View {
+  let source: ModelSource
+
+  var body: some View {
+    HStack(spacing: 4) {
+      Text("Downloads from").foregroundStyle(Theme.mutedForeground)
+      Link(destination: source.page) {
+        Text(source.label).underline().lineLimit(1).truncationMode(.middle)
+      }
+      .foregroundStyle(Theme.foreground)
+      .help("Open \(source.page.absoluteString)")
+    }
+    .font(.swissCaption)
+    .accessibilityElement(children: .combine)
+    .accessibilityLabel("Downloads from \(source.label)")
+    .accessibilityAddTraits(.isLink)
   }
 }

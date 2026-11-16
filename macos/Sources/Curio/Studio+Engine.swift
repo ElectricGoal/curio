@@ -173,6 +173,7 @@ extension Studio {
       let response = try await engine.models()
       models = response.models
       modelStorage = response.storage
+      decisionModels = response.decision
       adoptUsableModel()
     } catch {
       status = "Could not load the model list."
@@ -197,7 +198,7 @@ extension Studio {
   }
 
   func isInstalled(_ alias: String) -> Bool {
-    models.first { $0.alias == alias }?.installed ?? false
+    (models + decisionModels).first { $0.alias == alias }?.installed ?? false
   }
 
   func downloadModel(_ alias: String) {
@@ -228,7 +229,7 @@ extension Studio {
   }
 
   private func download(_ alias: String) async -> Bool {
-    let name = models.first { $0.alias == alias }?.name ?? alias
+    let name = (models + decisionModels).first { $0.alias == alias }?.name ?? alias
     let engine = engine
     let change = await perform(.downloading(modelName: name)) { progress in
       try await engine.downloadModel(alias, onProgress: progress)

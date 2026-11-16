@@ -25,7 +25,7 @@ struct ModelSetupView: View {
       }
       .overlay(Rectangle().strokeBorder(Theme.border, lineWidth: Theme.hairline))
       .accessibilityElement(children: .contain).accessibilityLabel("Models")
-      Text("You can switch models or remove them later on the Models page.")
+      Text("You can switch models or remove them later in Settings (⌘,).")
         .font(.swissCaption).foregroundStyle(Theme.mutedForeground)
       HStack(spacing: Theme.Space.s) {
         Button("Not Now") {

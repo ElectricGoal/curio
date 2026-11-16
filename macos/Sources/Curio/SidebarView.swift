@@ -81,13 +81,12 @@ struct SidebarView: View {
       case .cleanup:
         let count = studio.junkCount
         return count > 0 ? Format.count(count) : nil
-      case .library, .models:
+      case .library, .filter:
         return nil
       }
     }()
     return SidebarRow(title: page.title, selected: studio.page == page, trailing: badge) {
       studio.page = page
-      if page == .models { studio.refreshModels() }
     }
   }
 
@@ -118,6 +117,12 @@ struct SidebarView: View {
         Text(headline).font(.swissTitle)
         Text(detail).font(.swissCaption).foregroundStyle(Theme.mutedForeground)
           .fixedSize(horizontal: false, vertical: true)
+        SettingsLink {
+          Text("Models…")
+        }
+        .buttonStyle(SwissButtonStyle(kind: .quiet, compact: true))
+        .padding(.leading, -Theme.Space.s)
+        .help("Download, choose or remove search models (⌘,)")
       }
       .padding(Theme.Space.m).frame(maxWidth: .infinity, alignment: .leading)
     }

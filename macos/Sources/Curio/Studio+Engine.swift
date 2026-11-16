@@ -84,6 +84,7 @@ extension Studio {
         if preparingSearch, latest.indexed, !latest.needsRebuild { await prepareSearch(in: folder) }
         guard generation == folderGeneration else { return }
         refreshCurationIfStale()
+        if page == .filter || filterRun != nil { runFilter(immediately: true) }
       } catch {
         // Browsing still works without the index, but say why search does not.
         guard generation == folderGeneration else { return }

@@ -8,6 +8,8 @@ public struct Activity: Identifiable, Equatable, Sendable {
     case downloading(modelName: String)
     case removingModel
     case findingDuplicates
+    /// Copying or moving filtered images to another folder.
+    case exporting(FileExport.Mode)
 
     public var title: String {
       switch self {
@@ -16,6 +18,7 @@ public struct Activity: Identifiable, Equatable, Sendable {
       case .downloading(let name): return "Downloading \(name)"
       case .removingModel: return "Removing model"
       case .findingDuplicates: return "Looking for duplicates"
+      case .exporting(let mode): return mode == .copy ? "Copying images" : "Moving images"
       }
     }
 
@@ -25,6 +28,7 @@ public struct Activity: Identifiable, Equatable, Sendable {
       case .downloading: return "The download did not finish"
       case .removingModel: return "The model could not be removed"
       case .findingDuplicates: return "Could not look for duplicates"
+      case .exporting(let mode): return mode == .copy ? "The images could not be copied" : "The images could not be moved"
       }
     }
 
@@ -33,14 +37,14 @@ public struct Activity: Identifiable, Equatable, Sendable {
     public var cancelsCooperatively: Bool {
       switch self {
       case .indexing, .rebuilding: return true
-      case .downloading, .removingModel, .findingDuplicates: return false
+      case .downloading, .removingModel, .findingDuplicates, .exporting: return false
       }
     }
 
     /// Whether the task reads or writes the open folder's index.
     public var usesFolder: Bool {
       switch self {
-      case .indexing, .rebuilding, .findingDuplicates: return true
+      case .indexing, .rebuilding, .findingDuplicates, .exporting: return true
       case .downloading, .removingModel: return false
       }
     }

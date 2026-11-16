@@ -3,7 +3,7 @@ import CurioKit
 import SwiftUI
 
 enum Page: String, CaseIterable, Identifiable {
-  case library, duplicates, cleanup, models
+  case library, duplicates, cleanup, filter
 
   var id: String { rawValue }
 
@@ -12,7 +12,7 @@ enum Page: String, CaseIterable, Identifiable {
     case .library: return "Library"
     case .duplicates: return "Duplicates"
     case .cleanup: return "Clean Up"
-    case .models: return "Models"
+    case .filter: return "Filter"
     }
   }
 }
@@ -134,6 +134,22 @@ final class Studio: ObservableObject {
   /// An album asked for before its members were known; opened once they are.
   var albumToOpen: String?
 
+  // Filter
+  @Published var filterSteps: [FilterStep]
+  @Published var filterRun: FilterRun?
+  @Published var isFiltering = false
+  /// Why the chain could not run, in words for the user.
+  @Published var filterProblem: String?
+  /// The step whose output is previewed; nil for the final result.
+  @Published var filterFocus: UUID?
+  @Published var filterShowsRemoved = false
+  /// The photos the preview shows, kept so the grid is not rebuilt on every redraw.
+  @Published var filterPreview: [Photo] = []
+  @Published var exportFolder: URL?
+  @Published var exportMode: FileExport.Mode = .copy
+  var filterGeneration = 0
+  var filterTask: Task<Void, Never>?
+
   // Presentation
   @Published var page: Page = .library
   @Published var preview: PreviewState?
@@ -191,6 +207,7 @@ final class Studio: ObservableObject {
     thumbnailSize = preferences.thumbnailSize
     recentFolders = Studio.existingFolders(preferences.recentFolders)
     albums = preferences.albums
+    filterSteps = preferences.filterSteps
   }
 
   // MARK: - Derived state
@@ -288,6 +305,12 @@ final class Studio: ObservableObject {
     curationGeneration += 1
     junkSelection = []
     albumToOpen = nil
+    filterRun = nil
+    filterPreview = []
+    filterProblem = nil
+    isFiltering = false
+    filterTask?.cancel()
+    filterGeneration += 1
     indexStatus = nil
     engineProblem = nil
     notice = nil

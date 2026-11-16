@@ -65,6 +65,11 @@ struct CurioApp: App {
     // Without this, launching the app *with* a folder would not show the window.
     .handlesExternalEvents(matching: ["*"])
     .defaultSize(width: 1280, height: 820)
+
+    // Models are an app-wide setting, so they live where macOS puts settings: ⌘,
+    Settings {
+      SettingsView().environmentObject(studio)
+    }
     .commands {
       CommandGroup(replacing: .newItem) {
         Button("Open Folder…") { studio.chooseFolder() }.keyboardShortcut("o")

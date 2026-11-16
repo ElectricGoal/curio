@@ -13,11 +13,13 @@ public struct Preferences: Codable, Equatable, Sendable {
   public var sort: PhotoSort
   /// Smart albums, by the words they match.
   public var albums: [String]
+  /// The filter chain, kept between launches.
+  public var filterSteps: [FilterStep]
 
   public init(
     model: String = Preferences.defaultModel, folder: String? = nil,
     recentFolders: [String] = [], thumbnailSize: Double = 180, sort: PhotoSort = .name,
-    albums: [String] = []
+    albums: [String] = [], filterSteps: [FilterStep] = []
   ) {
     self.model = model
     self.folder = folder
@@ -25,6 +27,7 @@ public struct Preferences: Codable, Equatable, Sendable {
     self.thumbnailSize = thumbnailSize
     self.sort = sort
     self.albums = albums
+    self.filterSteps = filterSteps
   }
 
   /// Tolerates files written by earlier versions, which stored fewer keys.
@@ -40,6 +43,7 @@ public struct Preferences: Codable, Equatable, Sendable {
     let storedSort = try values.decodeIfPresent(String.self, forKey: .sort)
     sort = storedSort.flatMap(PhotoSort.init) ?? fallback.sort
     albums = try values.decodeIfPresent([String].self, forKey: .albums) ?? []
+    filterSteps = (try? values.decodeIfPresent([FilterStep].self, forKey: .filterSteps)) ?? []
   }
 
   /// A copy with `path` as the current folder and at the front of the recents.

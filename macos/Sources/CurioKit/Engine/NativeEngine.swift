@@ -51,7 +51,7 @@ public actor NativeEngine: SearchEngine {
       modelLoader ?? { alias in
         guard let directory = library.directory(for: alias) else {
           let name = ModelCatalog.entry(alias)?.name ?? alias
-          throw EngineError.failed("\(name) is not installed. Add it from the Models page.")
+          throw EngineError.failed("\(name) is not installed. Add it in Settings › Models.")
         }
         return try await CoreMLEmbeddingModel.load(
           directory: directory, cache: compiledDirectory.appendingPathComponent(alias))

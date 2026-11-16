@@ -73,7 +73,7 @@ struct StudioView: View {
     case .library: return studio.folder?.lastPathComponent ?? "Library"
     case .duplicates: return "Duplicates"
     case .cleanup: return "Clean Up"
-    case .models: return "Models"
+    case .filter: return "Filter"
     }
   }
 
@@ -84,7 +84,7 @@ struct StudioView: View {
         ?? "No folder open"
     case .duplicates: return "Copies and near-copies in this folder."
     case .cleanup: return "Screenshots, blurry shots and other clutter in this folder."
-    case .models: return "What turns your images and words into something searchable."
+    case .filter: return "Keep and remove images step by step, then copy or move what is left."
     }
   }
 
@@ -93,7 +93,7 @@ struct StudioView: View {
     case .library: LibraryView()
     case .duplicates: DuplicatesView()
     case .cleanup: CleanUpView()
-    case .models: ModelsView()
+    case .filter: FilterView()
     }
   }
 

@@ -41,6 +41,13 @@ The app itself is about 5 MB. On first launch Curio asks which search model to d
 - **Clean Up** gathers likely clutter: screenshots, memes, documents and receipts, whiteboards, blurry shots, dark or blank frames and accidental shots.
 - Nothing is selected for you. Click the images you want gone, or **Select All** for a group, then move them to the Trash in one step.
 
+### Filter in steps
+
+- The **Filter** page is a chain of steps, top to bottom. Each step **keeps** or **removes** the images matching a description — "portrait photos of a person", "a product on a plain white background", "a blurry, out of focus photo" — and passes the rest to the next.
+- Every step shows how many images went in and how many it took out; click a step to preview what is left after it, or what it removed. **Strictness** (Loose, Balanced, Strict) sets how clearly an image must match.
+- Choose a folder, or make one with **New Folder…**, and **Copy** or **Move** the result there. Nothing is overwritten: a clashing name gets a number. The chain is remembered for next time.
+- Short, concrete descriptions work best. Image quality ("blurry", "artifacts") is the model's weakest area, so check those steps in the preview.
+
 ### Index once, stay current
 
 - **Index** a folder once to make it searchable. A single progress bar shows the time left from the start.
@@ -61,7 +68,7 @@ The app itself is about 5 MB. On first launch Curio asks which search model to d
 
 ### Models
 
-- Uses **MobileCLIP-S4** by default for the best search quality. The lighter, faster **OpenAI CLIP ViT-B/32** is available too; download, switch or remove either on the Models page.
+- Uses **MobileCLIP-S4** by default for the best search quality. The lighter, faster **OpenAI CLIP ViT-B/32** is available too; download, switch or remove either in **Settings** (⌘,), or from **Models…** at the bottom of the sidebar.
 - Each folder remembers the model it was indexed with. Switching models only affects new indexes, or a **Rebuild Index** from the ⋯ menu; cancelling a rebuild keeps the old index.
 
 ### Private and lightweight

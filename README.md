@@ -1,4 +1,8 @@
-# Curio
+<p align="center">
+  <img src="macos/AppIcon.iconset/icon_256x256.png" width="128" height="128" alt="Curio app icon">
+</p>
+
+<h1 align="center">Curio</h1>
 
 A native macOS app for curating your images: browse any folder, find a picture by describing it, and clear out duplicates. Search runs on your Mac's GPU, works offline once its model is downloaded, and your photos never leave your Mac.
 

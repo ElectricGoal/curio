@@ -4,8 +4,14 @@ import SwiftUI
 
 enum Page: String, CaseIterable, Identifiable {
   case library, duplicates, cleanup, filter
+  /// Appearance and the models the app runs: not about the open folder, but
+  /// kept in the same window as everything else.
+  case settings
 
   var id: String { rawValue }
+
+  /// The pages listed in the sidebar. Settings is reached from the footer.
+  static let sidebar: [Page] = [.library, .duplicates, .cleanup, .filter]
 
   var title: String {
     switch self {
@@ -13,6 +19,7 @@ enum Page: String, CaseIterable, Identifiable {
     case .duplicates: return "Duplicates"
     case .cleanup: return "Clean Up"
     case .filter: return "Filter"
+    case .settings: return "Settings"
     }
   }
 }
@@ -97,6 +104,10 @@ final class Studio: ObservableObject {
     }
   }
   @Published var thumbnailSize: Double
+  /// Light, dark, or whatever macOS is set to.
+  @Published private(set) var appearance: Appearance
+  /// Puts an appearance on the app's windows, menus and dialogs; tests replace it.
+  var applyAppearance: (Appearance) -> Void = Studio.applyToApp
 
   // Search
   @Published var query = ""
@@ -116,6 +127,8 @@ final class Studio: ObservableObject {
   @Published var models: [ModelInfo] = []
   @Published private(set) var selectedModel: String
   @Published var modelStorage: String?
+  /// Models that answer careful filter steps by looking at each image.
+  @Published var decisionModels: [ModelInfo] = []
 
   // Duplicates
   @Published var duplicates: DuplicateReport?
@@ -191,7 +204,7 @@ final class Studio: ObservableObject {
         .map(URL.init(fileURLWithPath:)),
       engine: NativeEngine(
         dataRoot: dataRoot, bundledModels: AppEnvironment.bundledModels,
-        remoteModels: AppEnvironment.remoteModels))
+        remoteModels: AppEnvironment.remoteModels, shaders: AppEnvironment.shaders))
   }
 
   /// - Parameters:
@@ -205,6 +218,7 @@ final class Studio: ObservableObject {
     selectedModel = preferences.model
     sort = preferences.sort
     thumbnailSize = preferences.thumbnailSize
+    appearance = preferences.appearance
     recentFolders = Studio.existingFolders(preferences.recentFolders)
     albums = preferences.albums
     filterSteps = preferences.filterSteps
@@ -252,6 +266,7 @@ final class Studio: ObservableObject {
   func start() {
     guard !started else { return }
     started = true
+    applyAppearance(appearance)
     refreshModels()  // tells whether a model must be downloaded first
     let argument = CommandLine.arguments.dropFirst().first { !$0.hasPrefix("-") }
     if folder != nil {
@@ -394,6 +409,22 @@ final class Studio: ObservableObject {
     selectedModel = alias
     dismissedModelHint = false
     updatePreferences { $0.model = alias }
+  }
+
+  func setAppearance(_ chosen: Appearance) {
+    guard chosen != appearance else { return }
+    appearance = chosen
+    updatePreferences { $0.appearance = chosen }
+    applyAppearance(chosen)
+  }
+
+  /// With no appearance of its own, the app follows macOS.
+  static func applyToApp(_ appearance: Appearance) {
+    switch appearance {
+    case .system: NSApplication.shared.appearance = nil
+    case .light: NSApplication.shared.appearance = NSAppearance(named: .aqua)
+    case .dark: NSApplication.shared.appearance = NSAppearance(named: .darkAqua)
+    }
   }
 
   /// Called when the size slider is released, so dragging does not hit the disk.

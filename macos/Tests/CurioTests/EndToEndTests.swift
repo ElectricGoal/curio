@@ -171,14 +171,86 @@ final class EndToEndTests: XCTestCase {
     try await wait("stale status") { !studio.isScanning && studio.indexStatus?.pending == 1 }
     try await snapshot("07-new-images-banner")
 
-    // Models page.
-    studio.page = .models
+    // Settings, in the same window: appearance and models.
+    studio.page = .settings
     studio.refreshModels()
     try await wait("models") { !studio.models.isEmpty }
     XCTAssertTrue(studio.isInstalled(Self.model))
     try await pause(0.5)
-    try await snapshot("08-models")
+    try await snapshot("08-settings")
     print("snapshots written to \(snapshots.path)")
+  }
+
+  /// A careful filter step with the real decision model: it waits to be asked,
+  /// reports progress, keeps its answers, and changes what the chain keeps.
+  func testACarefulFilterStepLooksAtEachImage() async throws {
+    let root = try projectRoot()
+    let weights = root.appendingPathComponent("models/mlx/d1-2b/model.safetensors")
+    try XCTSkipUnless(
+      FileManager.default.fileExists(atPath: weights.path), "download Liquid d1-2B in Settings first")
+    let folder = try makePhotoFolder()
+    let studio = Studio(dataRoot: root, preferencesURL: workspace.appendingPathComponent("preferences.json"))
+    show(studio)
+    studio.selectModel("clip-vit-b32")
+    studio.open(folder)
+    try await wait("library scan") { !studio.isScanning && studio.indexStatus != nil }
+    studio.indexFolder()
+    try await wait("indexing", timeout: 180) { studio.notice != nil && studio.activity == nil }
+    await studio.loadModels()
+    XCTAssertEqual(studio.decisionModel?.installed, true)
+
+    studio.page = .filter
+    studio.addStep(.keep, text: "mountains")
+    let step = try XCTUnwrap(studio.filterSteps.last)
+    studio.updateStep(step.id) { $0.careful = true }
+    studio.runFilter(immediately: true)
+    try await wait("the chain") { studio.filterRun != nil && !studio.isFiltering }
+    let index = studio.filterSteps.count - 1
+    let byDescription = Set(studio.filterRun?.result ?? [])
+    let waiting = studio.uncheckedCount(at: index)
+    XCTAssertEqual(waiting, 42, "every readable image, and nothing has been asked yet")
+    try await snapshot("09-careful-step-waiting")
+
+    studio.lookAtImages(for: step.id)
+    try await wait("the model to start") { studio.activity?.kind == .deciding }
+    try await wait("the first images", timeout: 120) { (studio.activity?.fraction ?? 0) > 0.2 }
+    try capture("10-careful-step-looking")
+    try await wait("the model to finish", timeout: 300) {
+      studio.activity == nil && !studio.isFiltering && studio.uncheckedCount(at: index) == 0
+    }
+    let byLooking = Set(studio.filterRun?.result ?? [])
+    try await snapshot("11-careful-step-done")
+    XCTAssertFalse(byLooking.isEmpty, "some of Apple's wallpapers do show mountains")
+    XCTAssertLessThan(byLooking.count, 42, "and most do not")
+    XCTAssertTrue(
+      FileManager.default.fileExists(
+        atPath: IndexStore.directory(in: folder).appendingPathComponent("decisions.sqlite").path),
+      "the answers are kept next to the folder's index")
+    print(
+      "careful step: \(byDescription.count) kept by description, \(byLooking.count) after looking; "
+        + "\(byLooking.subtracting(byDescription).count) added, \(byDescription.subtracting(byLooking).count) dropped")
+    print("kept: \(byLooking.map { URL(fileURLWithPath: $0).lastPathComponent }.sorted())")
+    print("snapshots written to \(snapshots.path)")
+  }
+
+  /// Settings and the first-launch chooser say where each model is downloaded from.
+  func testModelsAreShownWithWhereTheyDownloadFrom() async throws {
+    let root = try projectRoot()
+    let engine = NativeEngine(dataRoot: root, remoteModels: URL(string: AppEnvironment.defaultModelsURL))
+    let studio = Studio(
+      dataRoot: root, preferencesURL: workspace.appendingPathComponent("preferences.json"), engine: engine)
+    await studio.loadModels()
+    XCTAssertEqual(
+      studio.models.map(\.source?.label),
+      [String?](repeating: "huggingface.co/ElectricGoal/curio-models", count: studio.models.count))
+    XCTAssertEqual(studio.decisionModel?.source?.label, "huggingface.co/LiquidAI/d1-2B-MLX-8bit")
+
+    show(studio)
+    studio.page = .settings
+    try await snapshot("12-settings")
+    window.close()
+    show(studio, content: AnyView(ModelSetupView().environmentObject(studio)), width: 520, height: 470)
+    try await snapshot("13-first-launch-model-source")
   }
 
   // MARK: - Fixtures
@@ -218,12 +290,21 @@ final class EndToEndTests: XCTestCase {
   // MARK: - Window and timing
 
   private func show(_ studio: Studio) {
-    let host = NSHostingView(rootView: StudioView().environmentObject(studio))
-    // Keep the app's own window size instead of growing to fit the content.
+    show(studio, content: AnyView(StudioView().environmentObject(studio)), width: 1280, height: 820)
+  }
+
+  /// Puts any of the app's screens in the window the snapshots are taken of.
+  private func show(_ studio: Studio, content: AnyView, width: CGFloat, height: CGFloat) {
+    let host = NSHostingView(rootView: content)
+    // Keep the given window size instead of growing to fit the content.
     host.sizingOptions = []
     window = NSWindow(
-      contentRect: NSRect(x: 0, y: 0, width: 1280, height: 820), styleMask: [.titled, .resizable],
+      contentRect: NSRect(x: 0, y: 0, width: width, height: height),
+      // As the app's own window: no title bar, the content reaching the top edge.
+      styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
       backing: .buffered, defer: false)
+    window.titlebarAppearsTransparent = true
+    window.titleVisibility = .hidden
     window.isReleasedWhenClosed = false
     window.appearance = NSAppearance(named: .aqua)
     window.contentView = host
@@ -242,7 +323,8 @@ final class EndToEndTests: XCTestCase {
   }
 
   private func capture(_ name: String) throws {
-    let view = try XCTUnwrap(window.contentView)
+    // The window's frame view, so its close, minimise and zoom buttons are in the picture.
+    let view = try XCTUnwrap(window.contentView?.superview ?? window.contentView)
     view.layoutSubtreeIfNeeded()
     let bitmap = try XCTUnwrap(view.bitmapImageRepForCachingDisplay(in: view.bounds))
     view.cacheDisplay(in: view.bounds, to: bitmap)

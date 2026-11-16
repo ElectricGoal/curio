@@ -31,15 +31,39 @@ public actor NativeEngine: SearchEngine {
   var isIndexing = false
   var idleTimer: Task<Void, Never>?
 
+  public typealias DecisionLoader = @Sendable (_ alias: String) async throws -> any DecisionModel
+  let decisionLibrary: DecisionLibrary
+  let loadDecisionModel: DecisionLoader
+  var loadedDecision: (alias: String, model: any DecisionModel)?
+  var loadingDecision: (alias: String, task: Task<any DecisionModel, Error>)?
+  /// How many requests are asking the decision model questions right now.
+  var deciding = 0
+
   /// - Parameters:
   ///   - dataRoot: where models, caches and timings are kept.
   ///   - bundledModels: models shipped inside the app, if any.
   ///   - remoteModels: base address of hosted models, if any.
   ///   - modelLoader: replaces Core ML loading; used by tests.
+  ///   - shaders: MLX's compiled Metal shaders, which the decision model needs.
+  ///   - decisionLoader: replaces MLX loading; used by tests.
   public init(
     dataRoot: URL, bundledModels: URL? = nil, remoteModels: URL? = nil,
-    modelLoader: ModelLoader? = nil
+    modelLoader: ModelLoader? = nil, shaders: URL? = nil, decisionLoader: DecisionLoader? = nil
   ) {
+    let decisionLibrary = DecisionLibrary(installDirectory: dataRoot.appendingPathComponent("models/mlx"))
+    self.decisionLibrary = decisionLibrary
+    loadDecisionModel =
+      decisionLoader ?? { alias in
+        guard let directory = decisionLibrary.directory(for: alias) else {
+          let name = DecisionCatalog.entry(alias)?.name ?? alias
+          throw EngineError.failed("\(name) is not installed. Add it in Settings.")
+        }
+        // Run from a source checkout, the data root is the checkout and holds the built shaders.
+        guard let shaders = shaders ?? MLXShaders.locate(projectRoot: dataRoot) else {
+          throw EngineError.failed(MLXShaders.missingMessage)
+        }
+        return try await D1DecisionModel.load(alias: alias, directory: directory, shaders: shaders)
+      }
     let library = ModelLibrary(
       installDirectory: dataRoot.appendingPathComponent("models/coreml"),
       bundledDirectory: bundledModels, remote: remoteModels)
@@ -51,7 +75,7 @@ public actor NativeEngine: SearchEngine {
       modelLoader ?? { alias in
         guard let directory = library.directory(for: alias) else {
           let name = ModelCatalog.entry(alias)?.name ?? alias
-          throw EngineError.failed("\(name) is not installed. Add it in Settings › Models.")
+          throw EngineError.failed("\(name) is not installed. Add it in Settings.")
         }
         return try await CoreMLEmbeddingModel.load(
           directory: directory, cache: compiledDirectory.appendingPathComponent(alias))
@@ -106,10 +130,11 @@ public actor NativeEngine: SearchEngine {
 
   /// Whether `alias` is being loaded or used by an index run right now.
   private func isInUse(_ alias: String) -> Bool {
-    indexingModel == alias || loading?.alias == alias
+    indexingModel == alias || loading?.alias == alias || loadingDecision?.alias == alias
+      || (deciding > 0 && loadedDecision?.alias == alias)
   }
 
-  private func scheduleIdleUnload() {
+  func scheduleIdleUnload() {
     idleTimer?.cancel()
     idleTimer = Task { [weak self] in
       try? await Task.sleep(for: .seconds(Self.idleUnloadSeconds))
@@ -119,37 +144,48 @@ public actor NativeEngine: SearchEngine {
   }
 
   private func unloadIfIdle() {
-    guard !isIndexing, loading == nil else {
+    guard !isIndexing, loading == nil, deciding == 0, loadingDecision == nil else {
       // Still working: look again later, or the model would stay loaded for good.
       scheduleIdleUnload()
       return
     }
     loaded = nil
     snapshots = [:]
+    forgetDecisionModel()
   }
 
   // MARK: - Models
 
   public func models() async throws -> ModelsResponse {
-    ModelsResponse(models: library.models(), storage: library.installDirectory.path)
+    // Search and decision models sit in sibling folders; the one above holds them all.
+    ModelsResponse(
+      models: library.models(), storage: library.installDirectory.deletingLastPathComponent().path,
+      decision: decisionLibrary.models())
   }
 
   public func downloadModel(_ alias: String, onProgress: @escaping ProgressHandler) async throws
     -> ModelChange
   {
-    let name = ModelCatalog.entry(alias)?.name ?? alias
+    let decision = DecisionCatalog.entry(alias)
+    let name = decision?.name ?? ModelCatalog.entry(alias)?.name ?? alias
     guard !isInUse(alias) else {
-      throw EngineError.busy("\(name) is in use. Let indexing finish or pause it first.")
+      throw EngineError.busy("\(name) is in use. Let it finish or pause it first.")
     }
     let message = "Downloading \(name)"
     onProgress(EngineProgress(message, estimate: .start))
     let estimator = Locked(RateProgressEstimator())
-    try await library.install(alias) { done, total in
+    let report: @Sendable (Int64, Int64) -> Void = { done, total in
       // The last sliver of the bar is for verifying and installing the files.
       let estimate = estimator.update { $0.at(done: Double(done), of: Double(total), finishing: 0.01) }
       onProgress(
         EngineProgress(
           message, estimate: estimate, current: Int(done), total: Int(total), unit: .bytes))
+    }
+    if decision != nil {
+      try await decisionLibrary.install(alias, onProgress: report)
+      forgetDecisionModel()
+    } else {
+      try await library.install(alias, onProgress: report)
     }
     forget(alias)
     onProgress(EngineProgress(message, estimate: .done))
@@ -157,9 +193,15 @@ public actor NativeEngine: SearchEngine {
   }
 
   public func deleteModel(_ alias: String) async throws -> ModelChange {
+    let decision = DecisionCatalog.entry(alias)
     guard !isInUse(alias) else {
-      let name = ModelCatalog.entry(alias)?.name ?? alias
-      throw EngineError.busy("\(name) is in use. Let indexing finish or pause it first.")
+      let name = decision?.name ?? ModelCatalog.entry(alias)?.name ?? alias
+      throw EngineError.busy("\(name) is in use. Let it finish or pause it first.")
+    }
+    if decision != nil {
+      try decisionLibrary.remove(alias)
+      forgetDecisionModel()
+      return ModelChange(model: alias, installed: decisionLibrary.directory(for: alias) != nil)
     }
     try library.remove(alias)
     forget(alias)

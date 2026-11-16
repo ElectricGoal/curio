@@ -1,33 +1,21 @@
 import CurioKit
 import SwiftUI
 
-/// The window: sidebar, page header, the current page and a status line.
+/// The window: sidebar, page header and the current page, over a footer.
 struct StudioView: View {
   @EnvironmentObject private var studio: Studio
 
   var body: some View {
-    HStack(spacing: 0) {
-      SidebarView()
-      VStack(alignment: .leading, spacing: 0) {
-        header
-        if let activity = studio.activity {
-          ActivityBanner(activity: activity).padding(.horizontal, Theme.gutter)
-            .padding(.bottom, Theme.Space.m)
-        }
-        page.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-          // On its own view: two alerts on one view can swallow each other.
-          .alert("Index this folder first", isPresented: $studio.needsIndexPrompt) {
-            Button("Index Now") { studio.indexFolder() }
-            Button("Not Now", role: .cancel) {}
-          } message: {
-            Text(
-              "Search and duplicate detection need a search index. Curio reads each image once and stores what it learns next to your photos. You can keep browsing while it works."
-            )
-          }
-        statusBar
-      }.background(Theme.background)
+    VStack(spacing: 0) {
+      HStack(spacing: 0) {
+        SidebarView()
+        content
+      }
+      FooterView()
     }
     .foregroundStyle(Theme.foreground)
+    // The window has no title bar of its own: the app reaches to its top edge.
+    .ignoresSafeArea(.container, edges: .top)
     .overlay {
       if let preview = studio.preview { PreviewView(state: preview) }
     }
@@ -52,6 +40,23 @@ struct StudioView: View {
     }
   }
 
+  /// The page header and the page itself.
+  private var content: some View {
+      VStack(alignment: .leading, spacing: 0) {
+        header
+        page.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+          // On its own view: two alerts on one view can swallow each other.
+          .alert("Index this folder first", isPresented: $studio.needsIndexPrompt) {
+            Button("Index Now") { studio.indexFolder() }
+            Button("Not Now", role: .cancel) {}
+          } message: {
+            Text(
+              "Search and duplicate detection need a search index. Curio reads each image once and stores what it learns next to your photos. You can keep browsing while it works."
+            )
+          }
+      }.background(Theme.background)
+  }
+
   private var header: some View {
     HStack(alignment: .firstTextBaseline, spacing: Theme.Space.m) {
       VStack(alignment: .leading, spacing: Theme.Space.xs) {
@@ -74,6 +79,7 @@ struct StudioView: View {
     case .duplicates: return "Duplicates"
     case .cleanup: return "Clean Up"
     case .filter: return "Filter"
+    case .settings: return "Settings"
     }
   }
 
@@ -85,6 +91,7 @@ struct StudioView: View {
     case .duplicates: return "Copies and near-copies in this folder."
     case .cleanup: return "Screenshots, blurry shots and other clutter in this folder."
     case .filter: return "Keep and remove images step by step, then copy or move what is left."
+    case .settings: return "How Curio looks, and the models it runs on this Mac."
     }
   }
 
@@ -94,57 +101,7 @@ struct StudioView: View {
     case .duplicates: DuplicatesView()
     case .cleanup: CleanUpView()
     case .filter: FilterView()
+    case .settings: SettingsView()
     }
-  }
-
-  private var statusBar: some View {
-    VStack(spacing: 0) {
-      Hairline()
-      HStack(spacing: Theme.Space.s) {
-        if studio.activity != nil || studio.isSearching || studio.isScanning {
-          ProgressView().controlSize(.small).accessibilityLabel("Working")
-        }
-        Text(studio.status).font(.swissCaption).foregroundStyle(Theme.mutedForeground)
-          .lineLimit(1)
-        Spacer()
-      }
-      .frame(height: Theme.Space.l)
-      .padding(.horizontal, Theme.gutter).padding(.vertical, Theme.Space.s)
-    }
-  }
-}
-
-/// Progress for the running task: one bar from 0 to 100% with the time left.
-struct ActivityBanner: View {
-  /// Often enough for the bar to move smoothly between engine reports.
-  private static let refresh: TimeInterval = 0.25
-
-  @EnvironmentObject private var studio: Studio
-  let activity: Activity
-
-  var body: some View {
-    TimelineView(.periodic(from: .now, by: Self.refresh)) { context in
-      VStack(alignment: .leading, spacing: Theme.Space.s) {
-        HStack(alignment: .firstTextBaseline, spacing: Theme.Space.m) {
-          Text(activity.isCancelling ? "Stopping…" : activity.kind.title).font(.swissTitle)
-          Spacer()
-          Text(activity.detail(now: context.date)).font(.swissCaption.monospacedDigit())
-            .foregroundStyle(Theme.mutedForeground)
-          if activity.kind.canCancel, !activity.isFinished {
-            Button(activity.kind.cancelsCooperatively ? "Pause" : "Cancel") {
-              studio.cancelActivity()
-            }
-            .buttonStyle(SwissButtonStyle(kind: .secondary, compact: true))
-            .disabled(activity.isCancelling)
-            .help(
-              activity.kind.cancelsCooperatively
-                ? "Stop after the current batch. Finished images stay searchable."
-                : "Stop this task")
-          }
-        }
-        ProgressRule(value: activity.progress(at: context.date), label: activity.kind.title)
-        Text(activity.message).font(.swissCaption).foregroundStyle(Theme.mutedForeground)
-      }
-    }.panel(emphasis: Theme.accent)
   }
 }

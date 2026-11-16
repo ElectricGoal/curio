@@ -278,6 +278,7 @@ private struct StepNode: View {
         Text(summary).font(.swissCaption.monospacedDigit())
           .foregroundStyle(step.isActive ? Theme.foreground : Theme.mutedForeground)
       }
+      careful
     }
     .frame(maxWidth: .infinity, alignment: .leading)
     .panel(emphasis: focused ? Theme.ink : nil)
@@ -286,6 +287,47 @@ private struct StepNode: View {
     .accessibilityElement(children: .contain)
     .accessibilityLabel("Step \(index + 1), \(step.action.label)")
     .accessibilityAddTraits(focused ? .isSelected : [])
+  }
+
+  /// The choice to have the decision model look at every image for this step,
+  /// and what is left for it to do.
+  @ViewBuilder private var careful: some View {
+    let model = studio.decisionModel
+    let unchecked = step.careful ? studio.uncheckedCount(at: index) : 0
+    VStack(alignment: .leading, spacing: Theme.Space.xs) {
+      Toggle(
+        "Look at each image",
+        isOn: Binding(
+          get: { step.careful }, set: { value in studio.updateStep(step.id) { $0.careful = value } })
+      )
+      .toggleStyle(.checkbox).font(.callout)
+      .help("A second model looks at every image and answers this step. Much more accurate, and much slower: about a third of a second per image, once.")
+      if step.careful, step.isActive {
+        if model?.installed != true {
+          HStack(spacing: Theme.Space.s) {
+            Text("Needs \(model?.name ?? "a model") (\(Format.bytes(DecisionCatalog.entry(model?.alias ?? "")?.downloadSize ?? 0))).")
+              .font(.swissCaption).foregroundStyle(Theme.mutedForeground)
+            Button("Download") { if let model { studio.downloadModel(model.alias) } }
+              .buttonStyle(SwissButtonStyle(kind: .secondary, compact: true))
+              .disabled(model == nil || studio.activity != nil)
+          }
+        } else if unchecked > 0 {
+          HStack(spacing: Theme.Space.s) {
+            Text("\(Format.images(unchecked)) not looked at yet — matched by description for now.")
+              .font(.swissCaption).foregroundStyle(Theme.mutedForeground)
+              .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+            Button("Look Now") { studio.lookAtImages(for: step.id) }
+              .buttonStyle(SwissButtonStyle(kind: .secondary, compact: true))
+              .disabled(studio.activity != nil || studio.isFiltering)
+              .help("Takes about a third of a second per image. You can stop at any time; the answers so far are kept.")
+          }
+        } else if studio.filterCounts(at: index) != nil {
+          Text("Every image here has been looked at.")
+            .font(.swissCaption).foregroundStyle(Theme.mutedForeground)
+        }
+      }
+    }
   }
 
   private var summary: String {

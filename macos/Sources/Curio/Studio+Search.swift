@@ -126,7 +126,7 @@ extension Studio {
         alert = AlertMessage(
           title: "This index needs a model that is not installed",
           message:
-            "Add \(indexStatus?.modelName ?? alias) in Settings › Models, or rebuild the index with another model."
+            "Add \(indexStatus?.modelName ?? alias) in Settings, or rebuild the index with another model."
         )
       }
       return false

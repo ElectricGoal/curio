@@ -10,6 +10,8 @@ public struct Activity: Identifiable, Equatable, Sendable {
     case findingDuplicates
     /// Copying or moving filtered images to another folder.
     case exporting(FileExport.Mode)
+    /// The decision model looking at each image for a careful filter step.
+    case deciding
 
     public var title: String {
       switch self {
@@ -19,6 +21,7 @@ public struct Activity: Identifiable, Equatable, Sendable {
       case .removingModel: return "Removing model"
       case .findingDuplicates: return "Looking for duplicates"
       case .exporting(let mode): return mode == .copy ? "Copying images" : "Moving images"
+      case .deciding: return "Looking at each image"
       }
     }
 
@@ -29,6 +32,7 @@ public struct Activity: Identifiable, Equatable, Sendable {
       case .removingModel: return "The model could not be removed"
       case .findingDuplicates: return "Could not look for duplicates"
       case .exporting(let mode): return mode == .copy ? "The images could not be copied" : "The images could not be moved"
+      case .deciding: return "The images could not all be looked at"
       }
     }
 
@@ -36,7 +40,8 @@ public struct Activity: Identifiable, Equatable, Sendable {
     /// else is stopped by restarting the engine.
     public var cancelsCooperatively: Bool {
       switch self {
-      case .indexing, .rebuilding: return true
+      // A careful step stops after the image in hand and keeps the answers it has.
+      case .indexing, .rebuilding, .deciding: return true
       case .downloading, .removingModel, .findingDuplicates, .exporting: return false
       }
     }
@@ -44,7 +49,7 @@ public struct Activity: Identifiable, Equatable, Sendable {
     /// Whether the task reads or writes the open folder's index.
     public var usesFolder: Bool {
       switch self {
-      case .indexing, .rebuilding, .findingDuplicates, .exporting: return true
+      case .indexing, .rebuilding, .findingDuplicates, .exporting, .deciding: return true
       case .downloading, .removingModel: return false
       }
     }

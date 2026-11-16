@@ -1,7 +1,7 @@
 import CurioKit
 import SwiftUI
 
-/// Navigation, recent folders and the state of the index, in one column.
+/// The app's name beside the window buttons, then navigation, albums and recent folders.
 struct SidebarView: View {
   @EnvironmentObject private var studio: Studio
   @State private var creatingAlbum = false
@@ -10,10 +10,13 @@ struct SidebarView: View {
   var body: some View {
     HStack(spacing: 0) {
       VStack(alignment: .leading, spacing: Theme.Space.xl) {
-        Text("Curio").font(.swissHeading.weight(.bold)).padding(.horizontal, Theme.Space.m)
-          .padding(.top, Theme.Space.xl)
+        // On the line of the window's close, minimise and zoom buttons, just past them.
+        Text("Curio").font(.headline)
+          .frame(height: Theme.titleRow)
+          .padding(.leading, Theme.windowButtonsWidth)
+          .accessibilityAddTraits(.isHeader)
         VStack(spacing: 0) {
-          ForEach(Page.allCases) { page in navigation(page) }
+          ForEach(Page.sidebar) { page in navigation(page) }
         }
         ScrollView {
           VStack(alignment: .leading, spacing: Theme.Space.xl) {
@@ -22,7 +25,6 @@ struct SidebarView: View {
           }.frame(maxWidth: .infinity, alignment: .leading)
         }
         .scrollIndicators(.never)
-        indexSummary
       }
       .frame(width: Theme.sidebarWidth, alignment: .leading)
       Rectangle().fill(Theme.border).frame(width: Theme.hairline).accessibilityHidden(true)
@@ -81,7 +83,7 @@ struct SidebarView: View {
       case .cleanup:
         let count = studio.junkCount
         return count > 0 ? Format.count(count) : nil
-      case .library, .filter:
+      case .library, .filter, .settings:
         return nil
       }
     }()
@@ -106,45 +108,6 @@ struct SidebarView: View {
         }
       }
     }
-  }
-
-  /// What is searchable right now, at a glance.
-  private var indexSummary: some View {
-    VStack(alignment: .leading, spacing: 0) {
-      Hairline()
-      VStack(alignment: .leading, spacing: Theme.Space.xs) {
-        Eyebrow(text: "Index")
-        Text(headline).font(.swissTitle)
-        Text(detail).font(.swissCaption).foregroundStyle(Theme.mutedForeground)
-          .fixedSize(horizontal: false, vertical: true)
-        SettingsLink {
-          Text("Models…")
-        }
-        .buttonStyle(SwissButtonStyle(kind: .quiet, compact: true))
-        .padding(.leading, -Theme.Space.s)
-        .help("Download, choose or remove search models (⌘,)")
-      }
-      .padding(Theme.Space.m).frame(maxWidth: .infinity, alignment: .leading)
-    }
-  }
-
-  private var headline: String {
-    guard studio.folder != nil else { return "Private by design" }
-    if studio.engineProblem != nil { return "Search unavailable" }
-    guard let status = studio.indexStatus else { return "Checking index…" }
-    if status.needsRebuild { return "Index out of date" }
-    return status.indexed ? "\(Format.count(status.count)) searchable" : "Not indexed yet"
-  }
-
-  private var detail: String {
-    guard studio.folder != nil else { return "Your images never leave this Mac." }
-    if studio.engineProblem != nil { return "You can still browse. See the note in the library." }
-    guard let status = studio.indexStatus else { return "Reading the folder." }
-    guard status.indexed else { return "Index this folder to search it by meaning." }
-    if status.needsRebuild { return "Rebuild it to search this folder again." }
-    var lines = [status.modelName ?? "Indexed"]
-    if status.pending > 0 { lines.append("\(Format.count(status.pending)) new to index") }
-    return lines.joined(separator: "\n")
   }
 }
 

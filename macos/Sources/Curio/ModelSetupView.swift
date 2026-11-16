@@ -25,8 +25,13 @@ struct ModelSetupView: View {
       }
       .overlay(Rectangle().strokeBorder(Theme.border, lineWidth: Theme.hairline))
       .accessibilityElement(children: .contain).accessibilityLabel("Models")
-      Text("You can switch models or remove them later in Settings (⌘,).")
-        .font(.swissCaption).foregroundStyle(Theme.mutedForeground)
+      VStack(alignment: .leading, spacing: Theme.Space.xs) {
+        if let source = studio.models.first(where: { $0.alias == choice })?.source {
+          ModelSourceLine(source: source)
+        }
+        Text("You can switch models or remove them later in Settings (⌘,).")
+          .font(.swissCaption).foregroundStyle(Theme.mutedForeground)
+      }
       HStack(spacing: Theme.Space.s) {
         Button("Not Now") {
           studio.dismissedModelSetup = true

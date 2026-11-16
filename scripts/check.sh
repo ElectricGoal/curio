@@ -10,8 +10,10 @@ mkdir -p .cache/clang .cache/swift
 export CLANG_MODULE_CACHE_PATH="$CURIO_PROJECT_ROOT/.cache/clang"
 export SWIFTPM_MODULECACHE_OVERRIDE="$CURIO_PROJECT_ROOT/.cache/swift"
 
-# Model-accuracy tests skip themselves until scripts/convert-models.sh has run;
-# the end-to-end test skips itself unless CURIO_E2E=1.
+# Model-accuracy tests skip themselves until scripts/convert-models.sh has run
+# (and, for the decision model, until it is installed and scripts/d1-reference.sh
+# has run); the end-to-end tests skip themselves unless CURIO_E2E=1.
+bash scripts/build-mlx-shaders.sh
 swift test --package-path macos
 if [[ "${1:-}" == "--e2e" ]]; then
   CURIO_E2E=1 swift test --package-path macos --filter EndToEndTests

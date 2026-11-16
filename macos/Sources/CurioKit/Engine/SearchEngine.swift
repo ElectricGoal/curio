@@ -30,6 +30,14 @@ public protocol SearchEngine: Sendable {
   ) async throws -> SearchResponse
   /// Every indexed image's similarity to each prompt: the basis of tags, albums and Clean Up.
   func scores(folder: URL, prompts: [String]) async throws -> PromptScores
+  /// Yes/no answers from the decision model about `paths`, one per question.
+  /// Answers given before are remembered. With `asking`, images without one
+  /// are looked at now (slow: a fraction of a second each); without it, only
+  /// what is already known comes back. Cancelling keeps the answers so far.
+  func decisions(
+    folder: URL, paths: [String], questions: [String], asking: Bool,
+    onProgress: @escaping ProgressHandler
+  ) async throws -> DecisionScores
   func duplicates(
     folder: URL, threshold: Double, exactOnly: Bool, onProgress: @escaping ProgressHandler
   ) async throws -> DuplicatesResponse

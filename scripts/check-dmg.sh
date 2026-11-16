@@ -47,13 +47,26 @@ if OUTSIDE="$(grep -Ev '^(/System/Library/|/usr/lib/)' <<<"$LINKED")"; then
   exit 1
 fi
 
+if [[ ! -s "$APP/Contents/Resources/mlx.metallib" ]]; then
+  echo "the app is missing MLX's GPU shaders (Contents/Resources/mlx.metallib)" >&2
+  exit 1
+fi
+
 if [[ -d "$APP/Contents/Resources/models" ]]; then
   echo "==> Indexing and searching with the models inside the app"
   mkdir -p "$WORK/data"
   (cd / && env -i HOME="$HOME" PATH=/usr/bin:/bin CURIO_DATA_ROOT="$WORK/data" \
     "$APP/Contents/MacOS/Curio" --self-test | sed 's/^/  /')
 else
-  echo "==> No models inside the app (it downloads them); skipping the search check"
+  echo "==> No models inside the app (it downloads them); checking only that it can use the GPU"
+  mkdir -p "$WORK/data"
+  # Without a model the self-test stops after its GPU check; that line is what is wanted.
+  OUTPUT="$(cd / && env -i HOME="$HOME" PATH=/usr/bin:/bin CURIO_DATA_ROOT="$WORK/data" \
+    "$APP/Contents/MacOS/Curio" --self-test || true)"
+  if ! grep -q "MLX computes on the GPU" <<<"$OUTPUT"; then
+    printf 'the app could not use the GPU through MLX:\n%s\n' "$OUTPUT" >&2
+    exit 1
+  fi
 fi
 
 echo "==> Checking nothing was written into the app"

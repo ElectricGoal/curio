@@ -68,4 +68,94 @@ final class FilterTests: XCTestCase {
     XCTAssertTrue(stopped.cancelled)
     XCTAssertEqual(stopped.done, [])
   }
+
+  // MARK: - Careful steps
+
+  private func careful(_ action: FilterStep.Action = .keep, _ strictness: FilterStep.Strictness = .balanced)
+    -> FilterStep
+  {
+    FilterStep(action: action, text: "portrait", strictness: strictness, careful: true)
+  }
+
+  func testACarefulStepGoesByTheDecisionModelNotTheDescription() {
+    // By description, a.jpg matches and b.jpg does not; the model says the opposite.
+    let step = careful()
+    let rows: [String: [Float]] = ["/a.jpg": [0.20, 0.30], "/b.jpg": [0.20, 0.10]]
+    let decisions = DecisionScores(
+      model: "d1-2b", questions: [step.question], answers: ["/a.jpg": [0.04], "/b.jpg": [0.97]])
+    let run = FilterRun(steps: [step], scores: scores(rows, prompts: 2), decisions: decisions)
+    XCTAssertEqual(run.result, ["/b.jpg"])
+    XCTAssertEqual(run.stages[0].unchecked, [])
+  }
+
+  func testImagesTheModelHasNotSeenFallBackToTheDescriptionAndAreCounted() {
+    let step = careful()
+    let rows: [String: [Float]] = ["/a.jpg": [0.20, 0.30], "/b.jpg": [0.20, 0.10], "/c.jpg": [0.20, 0.30]]
+    let decisions = DecisionScores(
+      model: "d1-2b", questions: [step.question], answers: ["/a.jpg": [0.04]], unanswered: ["/b.jpg"],
+      unreadable: ["/c.jpg"])
+    let run = FilterRun(steps: [step], scores: scores(rows, prompts: 2), decisions: decisions)
+    XCTAssertEqual(run.result, ["/c.jpg"], "a.jpg by the model, b.jpg and c.jpg by description")
+    XCTAssertEqual(run.stages[0].unchecked, ["/b.jpg"], "c.jpg cannot be read, so it is not waiting")
+    let none = FilterRun(steps: [step], scores: scores(rows, prompts: 2))
+    XCTAssertEqual(none.stages[0].unchecked.count, 3)
+    XCTAssertEqual(none.result, ["/a.jpg", "/c.jpg"])
+  }
+
+  func testOnlyImagesReachingACarefulStepWaitForIt() {
+    // Step 1 removes b.jpg by description, so the careful step 2 never needs to see it.
+    let first = FilterStep(action: .remove, text: "blurry")
+    let second = careful()
+    let rows: [String: [Float]] = ["/a.jpg": [0.20, 0.10, 0.30], "/b.jpg": [0.20, 0.30, 0.30]]
+    let run = FilterRun(steps: [first, second], scores: scores(rows, prompts: 3))
+    XCTAssertEqual(run.stages[1].unchecked, ["/a.jpg"])
+  }
+
+  func testStrictnessSetsHowSureTheModelMustBe() {
+    let rows: [String: [Float]] = ["/a.jpg": [0.20, 0.20], "/b.jpg": [0.20, 0.20], "/c.jpg": [0.20, 0.20]]
+    func kept(_ strictness: FilterStep.Strictness) -> [String] {
+      let step = careful(.keep, strictness)
+      let decisions = DecisionScores(
+        model: "d1-2b", questions: [step.question],
+        answers: ["/a.jpg": [0.35], "/b.jpg": [0.6], "/c.jpg": [0.9]])
+      return FilterRun(steps: [step], scores: scores(rows, prompts: 2), decisions: decisions).result
+    }
+    XCTAssertEqual(kept(.loose), ["/a.jpg", "/b.jpg", "/c.jpg"])
+    XCTAssertEqual(kept(.balanced), ["/b.jpg", "/c.jpg"])
+    XCTAssertEqual(kept(.strict), ["/c.jpg"])
+  }
+
+  func testACarefulRemoveStepTakesOutWhatTheModelIsSureOf() {
+    let step = careful(.remove)
+    let rows: [String: [Float]] = ["/a.jpg": [0.20, 0.20], "/b.jpg": [0.20, 0.20]]
+    let decisions = DecisionScores(
+      model: "d1-2b", questions: [step.question], answers: ["/a.jpg": [0.9], "/b.jpg": [0.1]])
+    XCTAssertEqual(
+      FilterRun(steps: [step], scores: scores(rows, prompts: 2), decisions: decisions).result, ["/b.jpg"])
+  }
+
+  func testAPlainStepIgnoresTheModelsAnswers() {
+    let plain = FilterStep(action: .keep, text: "portrait")
+    let rows: [String: [Float]] = ["/a.jpg": [0.20, 0.30]]
+    let decisions = DecisionScores(model: "d1-2b", questions: [plain.question], answers: ["/a.jpg": [0.01]])
+    let run = FilterRun(steps: [plain], scores: scores(rows, prompts: 2), decisions: decisions)
+    XCTAssertEqual(run.result, ["/a.jpg"])
+    XCTAssertEqual(run.stages[0].unchecked, [])
+  }
+
+  func testStepsSavedBeforeCarefulStepsExistedStillLoad() throws {
+    let saved = #"[{"id":"7F0B7C1E-6B43-4E0B-9C59-2A2E4B8E6D11","action":"keep","text":"portraits","strictness":"strict"}]"#
+    let steps = try JSONDecoder().decode([FilterStep].self, from: Data(saved.utf8))
+    XCTAssertEqual(steps.first?.careful, false)
+    XCTAssertEqual(steps.first?.strictness, .strict)
+    let again = try JSONDecoder().decode(
+      [FilterStep].self, from: JSONEncoder().encode([FilterStep(action: .remove, text: "x", careful: true)]))
+    XCTAssertEqual(again.first?.careful, true)
+  }
+
+  func testTheQuestionQuotesTheDescriptionWithoutStraySpaces() {
+    XCTAssertEqual(
+      FilterStep(action: .keep, text: "  screenshots ").question,
+      "Does this image match the description “screenshots”?")
+  }
 }

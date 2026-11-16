@@ -10,6 +10,14 @@ final class FakeEngine: SearchEngine, @unchecked Sendable {
   private var storedModels: [ModelInfo] = [FakeEngine.model("clip-vit-b32", installed: true)]
   private var storedIndexCalls: [(model: String, rebuild: Bool, expected: Int?)] = []
   private var storedSearches: [String] = []
+  private var storedDecisions: [String: Double] = [:]
+  private var storedLeads: [String: Float] = [:]
+  private var storedDecisionModels: [ModelInfo] = [FakeEngine.model("d1-2b", installed: true, isDefault: true)]
+  /// What the stand-in model would say once asked; `decisionAnswers` holds what it has said.
+  var decisionTruth: [String: Double] = [:]
+  /// When set, asking waits until it is cancelled, like a long real run.
+  var decidingRunsUntilCancelled = false
+  private var storedDecisionRequests: [(paths: [String], questions: [String], asking: Bool)] = []
   var statusDelay: Duration?
   /// When set, an index call waits until it is cancelled, like a long real one.
   var indexRunsUntilCancelled = false
@@ -49,6 +57,45 @@ final class FakeEngine: SearchEngine, @unchecked Sendable {
   func status(folder: URL) async throws -> IndexStatus {
     if let statusDelay { try? await Task.sleep(for: statusDelay) }
     return try status.get()
+  }
+
+  /// What the stand-in decision model says for each image path; unset paths are unanswered.
+  var decisionAnswers: [String: Double] {
+    get { lock.withLock { storedDecisions } }
+    set { lock.withLock { storedDecisions = newValue } }
+  }
+  var decisionRequests: [(paths: [String], questions: [String], asking: Bool)] {
+    lock.withLock { storedDecisionRequests }
+  }
+  var decisionList: [ModelInfo] {
+    get { lock.withLock { storedDecisionModels } }
+    set { lock.withLock { storedDecisionModels = newValue } }
+  }
+
+  func decisions(
+    folder: URL, paths: [String], questions: [String], asking: Bool,
+    onProgress: @escaping ProgressHandler
+  ) async throws -> DecisionScores {
+    lock.withLock { storedDecisionRequests.append((paths, questions, asking)) }
+    if asking {
+      if decidingRunsUntilCancelled {
+        // One answer lands, then the run is stopped: what it gave must be kept.
+        if let first = paths.first, let truth = decisionTruth[first] { decisionAnswers[first] = truth }
+        while !Task.isCancelled { try? await Task.sleep(for: .milliseconds(5)) }
+        throw EngineError.cancelled
+      }
+      for path in paths { if let truth = decisionTruth[path] { decisionAnswers[path] = truth } }
+    }
+    let known = decisionAnswers
+    var answers: [String: [Double?]] = [:]
+    for path in paths {
+      if let probability = known[path] {
+        answers[path] = [Double?](repeating: probability, count: questions.count)
+      }
+    }
+    return DecisionScores(
+      model: "d1-2b", questions: questions, answers: answers,
+      unanswered: paths.filter { known[$0] == nil })
   }
 
   func prepare(folder: URL) async throws {}
@@ -92,8 +139,20 @@ final class FakeEngine: SearchEngine, @unchecked Sendable {
     return SearchResponse(images: [], total: 0, model: "clip-vit-b32")
   }
 
+  /// How well each image (absolute path) fits every step's description; unset, nothing is indexed.
+  var descriptionLeads: [String: Float] {
+    get { lock.withLock { storedLeads } }
+    set { lock.withLock { storedLeads = newValue } }
+  }
+
   func scores(folder: URL, prompts: [String]) async throws -> PromptScores {
-    PromptScores(paths: [], prompts: prompts.count, scores: [], model: "clip-vit-b32")
+    let leads = descriptionLeads
+    let paths = leads.keys.sorted()
+    // The first prompt is the baseline every step is compared with.
+    let rows = paths.flatMap { path in
+      [Float(0.2)] + [Float](repeating: 0.2 + leads[path]!, count: max(0, prompts.count - 1))
+    }
+    return PromptScores(paths: paths, prompts: prompts.count, scores: rows, model: "clip-vit-b32")
   }
 
   func duplicates(
@@ -103,7 +162,7 @@ final class FakeEngine: SearchEngine, @unchecked Sendable {
   }
 
   func models() async throws -> ModelsResponse {
-    ModelsResponse(models: modelList, storage: "/models")
+    ModelsResponse(models: modelList, storage: "/models", decision: decisionList)
   }
 
   func downloadModel(_ alias: String, onProgress: @escaping ProgressHandler) async throws
@@ -189,6 +248,58 @@ final class StudioEngineTests: XCTestCase {
     XCTAssertNil(studio.indexStatus)
     try await wait("the answer") { studio.indexStatus != nil }
     XCTAssertFalse(studio.status.hasPrefix("Checking the index"))
+  }
+
+  // MARK: - Appearance
+
+  func testTheAppFollowsTheSystemUntilAnAppearanceIsChosen() throws {
+    let studio = try studio()
+    var applied: [Appearance] = []
+    studio.applyAppearance = { applied.append($0) }
+    XCTAssertEqual(studio.appearance, .system)
+
+    studio.start()
+    XCTAssertEqual(applied, [.system], "the saved choice is put in place at launch")
+
+    studio.setAppearance(.dark)
+    XCTAssertEqual(studio.appearance, .dark)
+    XCTAssertEqual(applied, [.system, .dark])
+    let saved = PreferencesStore(url: folder.appendingPathComponent(".prefs.json")).load().appearance
+    XCTAssertEqual(saved, .dark)
+
+    studio.setAppearance(.dark)
+    XCTAssertEqual(applied.count, 2, "choosing the same again does nothing")
+  }
+
+  func testAChosenAppearanceIsRememberedAndAppliedAtLaunch() throws {
+    let studio = try studio(preferences: #"{"appearance":"light"}"#)
+    var applied: [Appearance] = []
+    studio.applyAppearance = { applied.append($0) }
+    XCTAssertEqual(studio.appearance, .light)
+    studio.start()
+    XCTAssertEqual(applied, [.light])
+  }
+
+  func testAnAppearanceIsPutOnTheWholeApp() async throws {
+    addTeardownBlock { @MainActor in NSApplication.shared.appearance = nil }
+    // A window with no appearance of its own, like the app's.
+    let window = NSWindow(
+      contentRect: NSRect(x: 0, y: 0, width: 100, height: 100), styleMask: [.titled], backing: .buffered,
+      defer: false)
+    window.isReleasedWhenClosed = false
+    window.orderFrontRegardless()
+    addTeardownBlock { @MainActor in window.close() }
+    func shown() -> NSAppearance.Name? { window.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) }
+
+    // Both ways, so the result cannot be the Mac's own setting showing through.
+    Studio.applyToApp(.dark)
+    XCTAssertEqual(NSApplication.shared.appearance?.name, .darkAqua)
+    try await wait("the window to turn dark") { shown() == .darkAqua }
+    Studio.applyToApp(.light)
+    XCTAssertEqual(NSApplication.shared.appearance?.name, .aqua)
+    try await wait("the window to turn light") { shown() == .aqua }
+    Studio.applyToApp(.system)
+    XCTAssertNil(NSApplication.shared.appearance, "nothing of its own: macOS decides")
   }
 
   func testARememberedModelThatNoLongerExistsFallsBackAndIsSaved() async throws {

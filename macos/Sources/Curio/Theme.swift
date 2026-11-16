@@ -46,6 +46,10 @@ enum Theme {
   /// The margin every page shares, so content hangs from one left edge.
   static let gutter = Space.xl
   static let sidebarWidth: CGFloat = 216
+  /// The strip at the top of the window where macOS draws its close, minimise and zoom buttons.
+  static let titleRow: CGFloat = 28
+  /// Room those three buttons take from the window's left edge.
+  static let windowButtonsWidth: CGFloat = 78
 
   // MARK: Line
 

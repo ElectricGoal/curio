@@ -23,6 +23,24 @@ final class NameModel: DecisionModel, @unchecked Sendable {
   }
 }
 
+/// Counts how many of itself exist, to show that models are not held two at a time.
+final class CountedModel: DecisionModel, @unchecked Sendable {
+  let alias: String
+  private let alive: Locked<Int>
+
+  init(alias: String, alive: Locked<Int>) {
+    self.alias = alias
+    self.alive = alive
+    alive.update { $0 += 1 }
+  }
+
+  deinit { alive.update { $0 -= 1 } }
+
+  func decide(image: URL, questions: [String]) async throws -> [Double] {
+    questions.map { _ in 0.5 }
+  }
+}
+
 final class DecisionEngineTests: XCTestCase {
   private var root: URL!
   private var photos: URL!
@@ -64,12 +82,29 @@ final class DecisionEngineTests: XCTestCase {
   }
 
   private func decide(
-    _ questions: [String], paths: [String]? = nil, asking: Bool = true,
+    _ questions: [String], paths: [String]? = nil, asking: Bool = true, model: String = "d1-2b",
     onProgress: @escaping ProgressHandler = { _ in }
   ) async throws -> DecisionScores {
     try await engine.decisions(
-      folder: photos, paths: paths ?? self.paths, questions: questions, asking: asking,
-      onProgress: onProgress)
+      folder: photos, model: model, paths: paths ?? self.paths, questions: questions,
+      asking: asking, onProgress: onProgress)
+  }
+
+  func testEachModelKeepsItsOwnAnswers() async throws {
+    _ = try await decide(["red"])
+    let asked = model.asked.update { $0 }.count
+    // The other model has not looked at anything yet, whatever the first said.
+    let other = try await decide(["red"], asking: false, model: "d1-2b-4bit")
+    XCTAssertEqual(other.model, "d1-2b-4bit")
+    XCTAssertTrue(other.answers.isEmpty)
+    XCTAssertEqual(Set(other.unanswered), Set(paths))
+    let answered = try await decide(["red"], model: "d1-2b-4bit")
+    XCTAssertEqual(answered.answers.count, paths.count)
+    XCTAssertEqual(model.asked.update { $0 }.count, asked + paths.count, "every image is asked again")
+    XCTAssertEqual(loads.update { $0 }, 2, "one load per model")
+    // And the first model's answers are still there.
+    let first = try await decide(["red"], asking: false)
+    XCTAssertTrue(first.unanswered.isEmpty)
   }
 
   func testEveryImageIsAnsweredForEveryQuestion() async throws {
@@ -101,7 +136,8 @@ final class DecisionEngineTests: XCTestCase {
       decisionLoader: { _ in throw EngineError.failed("the model must not be needed") })
 
     let scores = try await fresh.decisions(
-      folder: photos, paths: paths, questions: ["red"], asking: true, onProgress: { _ in })
+      folder: photos, model: "d1-2b", paths: paths, questions: ["red"], asking: true,
+      onProgress: { _ in })
 
     XCTAssertEqual(scores.answers[paths[1]], [0.95])
   }
@@ -196,7 +232,7 @@ final class DecisionEngineTests: XCTestCase {
     let scores = try await decide(["red"], paths: [paths[0]])
 
     XCTAssertEqual(scores.answers[paths[0]], [0.95], "asked afresh")
-    XCTAssertNotEqual(NativeEngine.answersKey, "d1-2b/0")
+    XCTAssertNotEqual(NativeEngine.answersKey(for: "d1-2b"), "d1-2b/0")
   }
 
   func testProgressCountsImagesAndEndsFull() async throws {
@@ -221,11 +257,74 @@ final class DecisionEngineTests: XCTestCase {
     }
   }
 
+  func testSwitchingModelsLetsGoOfTheFirstBeforeReadingTheSecond() async throws {
+    let alive = Locked(0)
+    let most = Locked(0)
+    let switching = NativeEngine(
+      dataRoot: root.appendingPathComponent("switching"),
+      decisionLoader: { alias in
+        // What is in memory while this one is being read: nothing else may be.
+        let others = alive.update { $0 }
+        most.update { $0 = max($0, others + 1) }
+        return CountedModel(alias: alias, alive: alive)
+      })
+    for alias in ["d1-2b", "d1-2b-4bit", "d1-2b"] {
+      let scores = try await switching.decisions(
+        folder: photos, model: alias, paths: paths, questions: ["red"], asking: true,
+        onProgress: { _ in })
+      XCTAssertEqual(scores.model, alias)
+    }
+    XCTAssertEqual(most.update { $0 }, 1, "two models were in memory at once")
+  }
+
+  func testAnotherModelIsRefusedWhileOneIsAnswering() async throws {
+    let engine = engine!
+    let photos = photos!
+    let other = [paths[1]]
+    let attempt = Locked<Error?>(nil)
+    model.beforeAnswer = { _ in
+      do {
+        _ = try await engine.decisions(
+          folder: photos, model: "d1-2b-4bit", paths: other, questions: ["red"], asking: true,
+          onProgress: { _ in })
+      } catch { attempt.update { $0 = error } }
+    }
+    let scores = try await decide(["red"], paths: [paths[0]])
+    XCTAssertEqual(scores.answers[paths[0]], [0.95], "the run in progress is not disturbed")
+    guard case .busy = attempt.update({ $0 }) as? EngineError else {
+      return XCTFail("expected the second model to be refused, got \(String(describing: attempt.update { $0 }))")
+    }
+    XCTAssertEqual(loads.update { $0 }, 1)
+    // Once the first has finished, the other may take its place.
+    model.beforeAnswer = nil
+    let later = try await decide(["red"], paths: other, model: "d1-2b-4bit")
+    XCTAssertEqual(later.answers[other[0]], [0.95])
+  }
+
+  func testAModelCannotBeRemovedWhileItIsBeingRead() async throws {
+    let attempt = Locked<Error?>(nil)
+    let slow = Locked<NativeEngine?>(nil)
+    let loading = NativeEngine(
+      dataRoot: root.appendingPathComponent("loading"),
+      decisionLoader: { alias in
+        do { _ = try await slow.update { $0 }?.deleteModel(alias) } catch { attempt.update { $0 = error } }
+        return NameModel()
+      })
+    slow.update { $0 = loading }
+    _ = try await loading.decisions(
+      folder: photos, model: "d1-2b-4bit", paths: [paths[0]], questions: ["red"], asking: true,
+      onProgress: { _ in })
+    guard case .busy = attempt.update({ $0 }) as? EngineError else {
+      return XCTFail("expected the removal to be refused, got \(String(describing: attempt.update { $0 }))")
+    }
+  }
+
   func testWithoutTheModelInstalledTheErrorSaysWhereToGetIt() async throws {
     let plain = NativeEngine(dataRoot: root.appendingPathComponent("empty"))
     do {
       _ = try await plain.decisions(
-        folder: photos, paths: paths, questions: ["red"], asking: true, onProgress: { _ in })
+        folder: photos, model: "d1-2b", paths: paths, questions: ["red"], asking: true,
+        onProgress: { _ in })
       XCTFail("should have failed")
     } catch {
       XCTAssertTrue(error.localizedDescription.contains("Settings"), error.localizedDescription)
@@ -234,7 +333,8 @@ final class DecisionEngineTests: XCTestCase {
 
   func testTheModelListNamesTheDecisionModelSeparately() async throws {
     let response = try await engine.models()
-    XCTAssertEqual(response.decision.map(\.alias), ["d1-2b"])
+    XCTAssertEqual(response.decision.map(\.alias), ["d1-2b", "d1-2b-4bit"])
+    XCTAssertEqual(response.decision.filter(\.isDefault).map(\.alias), ["d1-2b"])
     XCTAssertFalse(response.models.contains { $0.alias == "d1-2b" }, "a folder is never indexed with it")
     XCTAssertEqual(response.decision.first?.installed, false)
   }
@@ -290,30 +390,38 @@ final class DecisionLibraryTests: XCTestCase {
     return DecisionLibrary(installDirectory: root.appendingPathComponent("installed"), catalog: [entry])
   }
 
-  func testThePublishedModelIsPinnedToOneRevisionWithChecksums() throws {
-    let entry = try XCTUnwrap(DecisionCatalog.entry(DecisionCatalog.defaultAlias))
-    XCTAssertTrue(entry.source.absoluteString.hasPrefix("https://huggingface.co/LiquidAI/"))
-    XCTAssertNotNil(
-      entry.source.absoluteString.range(of: #"/resolve/[0-9a-f]{40}$"#, options: .regularExpression),
-      "a branch name could change under the app; a commit cannot")
-    XCTAssertTrue(entry.files.allSatisfy { $0.sha256.count == 64 && $0.size > 0 })
-    XCTAssertTrue(Set(DecisionLibrary.requiredFiles).isSubset(of: Set(entry.files.map(\.path))))
-    XCTAssertTrue(entry.files.contains { $0.path == "LICENSE" }, "the licence travels with the model")
+  func testEveryPublishedModelIsPinnedToOneRevisionWithChecksums() throws {
+    XCTAssertNotNil(DecisionCatalog.entry(DecisionCatalog.defaultAlias))
+    XCTAssertEqual(Set(DecisionCatalog.entries.map(\.alias)).count, DecisionCatalog.entries.count)
+    for entry in DecisionCatalog.entries {
+      XCTAssertTrue(entry.source.absoluteString.hasPrefix("https://huggingface.co/LiquidAI/"), entry.alias)
+      XCTAssertNotNil(
+        entry.source.absoluteString.range(of: #"/resolve/[0-9a-f]{40}$"#, options: .regularExpression),
+        "\(entry.alias): a branch name could change under the app; a commit cannot")
+      XCTAssertTrue(entry.files.allSatisfy { $0.sha256.count == 64 && $0.size > 0 }, entry.alias)
+      XCTAssertTrue(
+        Set(DecisionLibrary.requiredFiles).isSubset(of: Set(entry.files.map(\.path))), entry.alias)
+      XCTAssertTrue(
+        entry.files.contains { $0.path == "LICENSE" }, "\(entry.alias): the licence travels with the model")
+    }
   }
 
-  /// The real thing, from Liquid AI's repository: 2.2 GB, so only on request
-  /// (`CURIO_D1_DOWNLOAD=1`). Proves the pinned address and checksums are right.
-  func testThePublishedModelDownloadsAndPassesItsChecksums() async throws {
+  /// The real thing, from Liquid AI's repository: gigabytes, so only on request
+  /// (`CURIO_D1_DOWNLOAD=1` for the default model, or a model's alias). Proves
+  /// the pinned address and checksums are right.
+  func testAPublishedModelDownloadsAndPassesItsChecksums() async throws {
+    let asked = ProcessInfo.processInfo.environment["CURIO_D1_DOWNLOAD"] ?? ""
+    let alias = asked == "1" ? DecisionCatalog.defaultAlias : asked
     try XCTSkipUnless(
-      ProcessInfo.processInfo.environment["CURIO_D1_DOWNLOAD"] == "1",
-      "set CURIO_D1_DOWNLOAD=1 to download the real model (2.2 GB)")
+      DecisionCatalog.entry(alias) != nil,
+      "set CURIO_D1_DOWNLOAD=1, or to a model's alias, to download the real model (gigabytes)")
     let library = DecisionLibrary(installDirectory: root.appendingPathComponent("installed"))
     let last = Locked<[Int64]>([0, 0])
 
-    try await library.install(DecisionCatalog.defaultAlias) { done, total in last.update { $0 = [done, total] } }
+    try await library.install(alias) { done, total in last.update { $0 = [done, total] } }
 
-    let directory = try XCTUnwrap(library.directory(for: DecisionCatalog.defaultAlias))
-    XCTAssertEqual(last.update { $0 }[0], DecisionCatalog.entry(DecisionCatalog.defaultAlias)?.downloadSize)
+    let directory = try XCTUnwrap(library.directory(for: alias))
+    XCTAssertEqual(last.update { $0 }[0], DecisionCatalog.entry(alias)?.downloadSize)
     XCTAssertTrue(FileManager.default.fileExists(atPath: directory.appendingPathComponent("LICENSE").path))
     XCTAssertNoThrow(try D1Config.load(from: directory))
   }

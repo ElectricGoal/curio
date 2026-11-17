@@ -129,6 +129,8 @@ final class Studio: ObservableObject {
   @Published var modelStorage: String?
   /// Models that answer careful filter steps by looking at each image.
   @Published var decisionModels: [ModelInfo] = []
+  /// Which of them careful steps use.
+  @Published private(set) var selectedDecisionModel: String
 
   // Duplicates
   @Published var duplicates: DuplicateReport?
@@ -216,6 +218,7 @@ final class Studio: ObservableObject {
       url: preferencesURL ?? dataRoot.appendingPathComponent(".runtime/preferences.json"))
     preferences = store.load()
     selectedModel = preferences.model
+    selectedDecisionModel = preferences.decisionModel
     sort = preferences.sort
     thumbnailSize = preferences.thumbnailSize
     appearance = preferences.appearance
@@ -409,6 +412,15 @@ final class Studio: ObservableObject {
     selectedModel = alias
     dismissedModelHint = false
     updatePreferences { $0.model = alias }
+  }
+
+  /// Careful steps use this decision model from now on. Each model keeps its
+  /// own answers, so the chain is read again with what this one has said.
+  func selectDecisionModel(_ alias: String) {
+    guard alias != selectedDecisionModel else { return }
+    selectedDecisionModel = alias
+    updatePreferences { $0.decisionModel = alias }
+    if filterRun != nil { runFilter(immediately: true) }
   }
 
   func setAppearance(_ chosen: Appearance) {

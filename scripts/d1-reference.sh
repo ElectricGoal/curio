@@ -1,8 +1,9 @@
 #!/bin/bash
-# Writes reference outputs for the decision model next to the installed copy
-# (models/mlx/d1-2b/fixtures.json), for the Swift tests to compare against.
+# Writes reference outputs for a decision model next to the installed copy
+# (models/mlx/<alias>/fixtures.json), for the Swift tests to compare against.
 #
 #   bash scripts/d1-reference.sh
+#   D1_REPO=LiquidAI/d1-2B-MLX-4bit bash scripts/d1-reference.sh d1-2b-4bit
 #
 # Uses mlx-vlm, the Python implementation the Swift code was written from, in a
 # throwaway environment that uv creates. Downloads the checkpoint (about 2.2 GB)

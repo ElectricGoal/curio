@@ -74,6 +74,7 @@ The app itself is about 6 MB. On first launch Curio asks which search model to d
 - Settings says where each model is downloaded from, with a link to the page listing its files.
 - Each folder remembers the model it was indexed with. Switching models only affects new indexes, or a **Rebuild Index** from the ⋯ menu; cancelling a rebuild keeps the old index.
 - **Liquid d1-2B**, for careful filter steps, is optional: about 2.2 GB, downloaded in Settings straight from [Liquid AI's own repository](https://huggingface.co/LiquidAI/d1-2B-MLX-8bit) and checked file by file. It uses about 3.3 GB of memory while it runs and is released when idle.
+- **Liquid d1-2B (4-bit)** is the same model packed smaller, for Macs with less memory: about 1.4 GB from [its own repository](https://huggingface.co/LiquidAI/d1-2B-MLX-4bit), about 2.2 GB of memory, the same speed. On 83 test images and 7 questions it gave the same answer as the full version 566 times out of 581; every difference was an image the full version was itself unsure about. One of the two is enough. Settings chooses which one careful steps use, and each keeps its own answers.
 
 ### Private and lightweight
 
@@ -103,7 +104,7 @@ bash scripts/launch.sh           # builds and opens dist/Curio.app
 
 The build is plain `swift build`. MLX's GPU shaders are the one thing that cannot compile, so `scripts/build-mlx-shaders.sh` compiles them into `mlx.metallib`, which the build scripts place inside the app.
 
-The decision model runs on Swift code in `macos/Sources/CurioKit/Engine/Decision`, written from [mlx-vlm](https://github.com/Blaizzy/mlx-vlm)'s implementation. To check it against that reference, download Liquid d1-2B in the app's Settings, then:
+The decision model runs on Swift code in `macos/Sources/CurioKit/Engine/Decision`, written from [mlx-vlm](https://github.com/Blaizzy/mlx-vlm)'s implementation. To check it against that reference, download Liquid d1-2B in the app's Settings, then (for the 4-bit version: `D1_REPO=LiquidAI/d1-2B-MLX-4bit bash scripts/d1-reference.sh d1-2b-4bit`):
 
 ```bash
 bash scripts/d1-reference.sh     # writes the reference's tokens, tensors and answers

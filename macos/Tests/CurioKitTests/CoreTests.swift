@@ -193,6 +193,18 @@ final class EngineDiagnosisTests: XCTestCase {
   }
 }
 
+final class DecisionModelPreferenceTests: XCTestCase {
+  func testTheDecisionModelDefaultsToTheFullOneAndSurvivesSaving() throws {
+    XCTAssertEqual(Preferences().decisionModel, DecisionCatalog.defaultAlias)
+    let older = try JSONDecoder().decode(Preferences.self, from: Data(#"{"model":"clip-vit-b32"}"#.utf8))
+    XCTAssertEqual(older.decisionModel, DecisionCatalog.defaultAlias, "files from before the setting existed")
+    let empty = try JSONDecoder().decode(Preferences.self, from: Data(#"{"decisionModel":""}"#.utf8))
+    XCTAssertEqual(empty.decisionModel, DecisionCatalog.defaultAlias)
+    let saved = try JSONEncoder().encode(Preferences(decisionModel: "d1-2b-4bit"))
+    XCTAssertEqual(try JSONDecoder().decode(Preferences.self, from: saved).decisionModel, "d1-2b-4bit")
+  }
+}
+
 final class AppearancePreferenceTests: XCTestCase {
   func testAppearanceDefaultsToTheSystemAndSurvivesSaving() throws {
     XCTAssertEqual(Preferences().appearance, .system)

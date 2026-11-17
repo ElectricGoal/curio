@@ -18,6 +18,7 @@ final class FakeEngine: SearchEngine, @unchecked Sendable {
   /// When set, asking waits until it is cancelled, like a long real run.
   var decidingRunsUntilCancelled = false
   private var storedDecisionRequests: [(paths: [String], questions: [String], asking: Bool)] = []
+  private var storedDecisionModelsAsked: [String] = []
   var statusDelay: Duration?
   /// When set, an index call waits until it is cancelled, like a long real one.
   var indexRunsUntilCancelled = false
@@ -72,11 +73,17 @@ final class FakeEngine: SearchEngine, @unchecked Sendable {
     set { lock.withLock { storedDecisionModels = newValue } }
   }
 
+  /// The decision model each request named, in order.
+  var decisionModelsAsked: [String] { lock.withLock { storedDecisionModelsAsked } }
+
   func decisions(
-    folder: URL, paths: [String], questions: [String], asking: Bool,
+    folder: URL, model: String, paths: [String], questions: [String], asking: Bool,
     onProgress: @escaping ProgressHandler
   ) async throws -> DecisionScores {
-    lock.withLock { storedDecisionRequests.append((paths, questions, asking)) }
+    lock.withLock {
+      storedDecisionRequests.append((paths, questions, asking))
+      storedDecisionModelsAsked.append(model)
+    }
     if asking {
       if decidingRunsUntilCancelled {
         // One answer lands, then the run is stopped: what it gave must be kept.

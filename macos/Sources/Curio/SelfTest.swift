@@ -74,14 +74,25 @@ enum SelfTest {
     }
   }
 
-  /// Careful filter steps: the decision model is asked only where it has been downloaded.
+  /// Careful filter steps: each decision model is asked, where it has been downloaded.
   private static func checkDecisions(installation: Installation, shaders: URL, photos: URL) async throws {
     let library = DecisionLibrary(installDirectory: installation.dataRoot.appendingPathComponent("models/mlx"))
-    let alias = DecisionCatalog.defaultAlias
-    guard let directory = library.directory(for: alias) else {
-      print("self-test: the decision model is not installed; careful filter steps were not exercised")
-      return
+    let installed = DecisionCatalog.entries.compactMap { entry in
+      library.directory(for: entry.alias).map { (entry.alias, $0) }
     }
+    if installed.isEmpty {
+      print("self-test: no decision model is installed; careful filter steps were not exercised")
+    }
+    for (alias, directory) in installed {
+      try await checkDecisions(alias: alias, directory: directory, shaders: shaders, photos: photos)
+      // The next one is read into memory the last has given back.
+      D1DecisionModel.releaseBuffers()
+    }
+  }
+
+  private static func checkDecisions(alias: String, directory: URL, shaders: URL, photos: URL)
+    async throws
+  {
     let started = Date()
     let model = try await D1DecisionModel.load(alias: alias, directory: directory, shaders: shaders)
     let question = "Is this image a solid red square?"

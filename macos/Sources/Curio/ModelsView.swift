@@ -24,7 +24,7 @@ struct ModelsView: View {
           Eyebrow(text: "For careful filter steps").padding(.top, Theme.Space.l)
             .padding(.bottom, Theme.Space.s)
           Text(
-            "Optional. On the Filter page, a step can have this model look at every image instead of matching by description."
+            "Optional. On the Filter page, a step can have one of these look at every image instead of matching by description. One is enough; each keeps its own answers."
           )
           .font(.swissBody).foregroundStyle(Theme.mutedForeground)
           .frame(maxWidth: 560, alignment: .leading).fixedSize(horizontal: false, vertical: true)
@@ -118,9 +118,15 @@ struct ModelsView: View {
 
   /// A decision model: it can be downloaded and removed, but a folder is never indexed with it.
   private func decisionRow(_ model: ModelInfo) -> some View {
-    HStack(alignment: .top, spacing: Theme.Space.l) {
+    // Only a model that is here is in use; until then the row just offers the download.
+    let selected = model.installed && studio.decisionModel?.alias == model.alias
+    return HStack(alignment: .top, spacing: Theme.Space.l) {
       VStack(alignment: .leading, spacing: Theme.Space.xs) {
-        Text(model.name).font(.swissTitle)
+        HStack(alignment: .firstTextBaseline, spacing: Theme.Space.s) {
+          Text(model.name).font(.swissTitle)
+          if selected { Tag(text: "Selected", filled: true) }
+          if model.isDefault { Tag(text: "Most accurate") }
+        }
         Text(model.summary).font(.swissBody).foregroundStyle(Theme.mutedForeground)
           .frame(maxWidth: 520, alignment: .leading).fixedSize(horizontal: false, vertical: true)
         Text(stateLine(model)).font(.swissCaption.monospacedDigit())
@@ -136,6 +142,11 @@ struct ModelsView: View {
           Button("Download") { studio.downloadModel(model.alias) }
             .buttonStyle(.swissPrimary).disabled(studio.activity != nil)
         }
+        if !selected, model.installed {
+          Button("Select") { studio.selectDecisionModel(model.alias) }.buttonStyle(.swiss)
+            .disabled(studio.activity != nil)
+            .help("Use this model for careful filter steps")
+        }
         if model.size > 0 {
           Button("Remove") { deleting = model }
             .buttonStyle(SwissButtonStyle(kind: .quiet, destructive: true))
@@ -144,6 +155,10 @@ struct ModelsView: View {
       }
     }
     .padding(.vertical, Theme.Space.m).padding(.leading, Theme.Space.m)
+    // As with search models: marked by a rule and a tag, not by colour alone.
+    .overlay(alignment: .leading) {
+      Rectangle().fill(selected ? Theme.ink : .clear).frame(width: Theme.rule)
+    }
   }
 
   private func stateLine(_ model: ModelInfo) -> String {

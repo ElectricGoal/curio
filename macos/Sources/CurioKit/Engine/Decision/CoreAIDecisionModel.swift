@@ -25,10 +25,13 @@
     let geometry: Geometry
     let window: Int
     let merge: Int
+    /// Whether the graph takes the sliding-window mask; a graph built with Core AI's
+    /// composite attention makes its own windows and has no such input.
+    let takesSlidingMask: Bool
 
     private init(
       alias: String, function: InferenceFunction, prompt: D1Prompt, layout: D1PictureLayout,
-      calibration: D1Calibration, geometry: Geometry, window: Int, merge: Int
+      calibration: D1Calibration, geometry: Geometry, window: Int, merge: Int, takesSlidingMask: Bool
     ) {
       self.alias = alias
       self.function = function
@@ -38,6 +41,7 @@
       self.geometry = geometry
       self.window = window
       self.merge = merge
+      self.takesSlidingMask = takesSlidingMask
     }
 
     /// Loads `asset` (an exported .aimodel, with `geometry.json` beside it); the
@@ -68,7 +72,8 @@
       return CoreAIDecisionModel(
         alias: alias, function: function, prompt: try D1Prompt(tokenizer: tokenizer), layout: layout,
         calibration: D1Calibration.load(from: checkpoint), geometry: geometry,
-        window: config.text.slidingWindow, merge: config.vision.merge)
+        window: config.text.slidingWindow, merge: config.vision.merge,
+        takesSlidingMask: model.functionDescriptor(for: "main")?.inputNames.contains("sliding_mask") ?? true)
     }
 
     public func decide(image: URL, questions: [String]) async throws -> [Double] {
@@ -111,14 +116,17 @@
       }
       let ids = row.ids.map(Int32.init) + [Int32](repeating: Int32(row.ids[0]), count: length - real)
       let tokens = (prompt.yesTokens + prompt.noTokens).map(Int32.init)
-      var outputs = try await function.run(inputs: [
+      var inputs: [String: NDArray] = [
         "patches": patches,
         "ids": NDArray(scalars: ids, shape: [length]),
         "full_mask": NDArray(scalars: fullMask, shape: [1, 1, length, length]),
-        "sliding_mask": NDArray(scalars: slidingMask, shape: [1, 1, length, length]),
         "slots": NDArray(scalars: row.slots.map(Int32.init), shape: [row.slots.count]),
         "tokens": NDArray(scalars: tokens, shape: [tokens.count]),
-      ])
+      ]
+      if takesSlidingMask {
+        inputs["sliding_mask"] = NDArray(scalars: slidingMask, shape: [1, 1, length, length])
+      }
+      var outputs = try await function.run(inputs: inputs)
       guard let scores = outputs.remove("scores")?.ndArray else {
         throw EngineError.failed("The Core AI model gave no scores.")
       }

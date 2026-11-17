@@ -57,9 +57,29 @@ The compiled model computes what the PyTorch model does; the 8-bit mirror's 68.6
 
 **Not done: Apple's composite ops.** Apple's macOS export path swaps RMSNorm, rotary positions and attention for Core AI composite ops (`coreai_torch.composite_ops` RMSNorm, RoPE, SDPA with a sliding `window_size`) and externalizes them. This export writes them as plain PyTorch ops, with sliding attention as a full mask: correct, but more operations per layer, and a likely part of the speed gap. That is the first thing to try before concluding Core AI is slower.
 
+## Next step: Apple's composite ops, and where the time goes
+
+`export.py --composite` builds the model as Apple's macOS export path does: RMSNorm and attention are `coreai_torch.composite_ops` (attention with its own causal sliding window, so the graph has no sliding-mask input) and are externalized as single Core AI ops. Rotary positions stay plain ops: d1 rotates part of each head, paired across its two halves, which the RoPE composite does not express (Apple's own primitives keep a decomposed RoPE for partial rotation).
+
+One trap on the way: the composite SDPA reads a mask as booleans (True: may attend). Given d1's additive float mask it computed garbage (scores off by up to 4); the verification gate caught it, and the composite path now passes `mask == 0`. Checked against the gates again: compiled vs PyTorch 63.9 dB (4-bit) and 56.9 dB (8-bit), against 40.
+
+Seconds per image (median of 30), GPU requested:
+
+| Core AI build | 4-bit | 8-bit | float16 |
+|---|---|---|---|
+| Plain ops (above) | 0.251 | 0.297 | — |
+| Composite ops | 0.252 | 0.299 | 0.235–0.241 |
+| Composite, embedding table left float16 | 0.257 | — | — |
+| MLX, for comparison | **0.184** | **0.186** | — |
+
+- **Composite ops change nothing**: Core AI's compiler already fused the plain norms and attention. They were not the gap.
+- **Not the embedding table either**: keeping it float16 (so a lookup is a plain row read, not a dequantized table) is no faster and costs ~0.9 GB more GPU memory.
+- **Core AI's floor is ~0.235 s** even unquantized; about 27% slower than MLX. The gap is how Core AI runs this graph, not the export. Quantized matmuls add a little at 4 bits and more at 8: Core AI's int8 is slower than its float16, so on Core AI 8-bit buys nothing over 4-bit.
+- GPU memory with composite ops is unchanged: about +1.6 GB (4-bit), +2.8 GB (8-bit); float16 takes +4.9 GB and 45 s to compile the first time.
+
 ## Verdict
 
-Not worth switching yet. MLX answers 1.36× faster at 4 bits and 1.57× faster at 8 bits, handles any picture shape and up to 16 questions per pass, and runs on macOS 14. Core AI saves about 0.7 GB of GPU memory, which matters on 8 GB Macs, but needs macOS 27, a fixed picture grid and row length per exported graph (or one graph per shape), and loses a little accuracy through re-quantization. Worth revisiting: use Core AI's composite ops (RMSNorm, RoPE, windowed SDPA) as Apple's export path does, export from the bfloat16 checkpoint, apply Apple's other GPU authoring patterns (fused QKV), and export a few picture shapes as separate functions.
+Not worth switching yet. MLX answers 1.36× faster at 4 bits and 1.57× faster at 8 bits, handles any picture shape and up to 16 questions per pass, and runs on macOS 14. Core AI saves about 0.7 GB of GPU memory, which matters on 8 GB Macs, but needs macOS 27, a fixed picture grid and row length per exported graph (or one graph per shape), and loses a little accuracy through re-quantization. Composite ops were tried and do not change the speed (see above), so the gap is Core AI's execution of this model rather than how it was exported. Still worth revisiting with newer Core AI releases, or to: export from the bfloat16 checkpoint, apply Apple's other GPU authoring patterns (fused QKV), and export a few picture shapes as separate functions.
 
 ## How it was built
 

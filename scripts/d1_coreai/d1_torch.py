@@ -63,6 +63,34 @@ def load_mlx_checkpoint(directory: Path) -> tuple[dict, dict[str, Tensor]]:
 
 # ---------------------------------------------------------------- pieces
 
+#: When set, norms and attention are Core AI composite ops (coreai_torch.composite_ops),
+#: as Apple's macOS export path builds them; rotary positions stay plain ops (d1 rotates
+#: part of each head, paired across halves, which the RoPE composite does not express).
+COMPOSITE = False
+
+
+def rms_norm(size: int, eps: float) -> nn.Module:
+    if COMPOSITE:
+        import coreai_torch.composite_ops as ops
+
+        return ops.RMSNorm(size, eps=eps).half()
+    return RMSNorm(size, eps)
+
+
+def attend(q: Tensor, k: Tensor, v: Tensor, scale: float, mask: Tensor | None = None,
+           causal_window: int | None = None) -> Tensor:
+    """Attention with fewer key/value heads than query heads (B, H, L, D). `causal_window`:
+    each token reads the `causal_window` tokens ending at itself (no mask needed)."""
+    if COMPOSITE:
+        import coreai_torch.composite_ops as ops
+
+        sdpa = ops.SDPA(scale=scale, is_causal=causal_window is not None, window_size=causal_window or 0)
+        # The composite reads a mask as booleans (True: may attend); ours arrive additive (0 or -inf).
+        return sdpa(q, k, v, attn_mask=None if mask is None else mask == 0)
+    repeat = q.shape[1] // k.shape[1]
+    k, v = k.repeat_interleave(repeat, dim=1), v.repeat_interleave(repeat, dim=1)
+    return F.scaled_dot_product_attention(q, k, v, attn_mask=mask, scale=scale)
+
 
 class RMSNorm(nn.Module):
     def __init__(self, size: int, eps: float):
@@ -107,7 +135,7 @@ class VisionAttention(nn.Module):
         self.heads, self.kv, self.size = h, kv, d // h
         self.q_proj, self.k_proj = linear(d, h * self.size), linear(d, kv * self.size)
         self.v_proj, self.out_proj = linear(d, kv * self.size), linear(h * self.size, d)
-        self.q_layernorm, self.k_layernorm = RMSNorm(self.size, cfg["norm_eps"]), RMSNorm(self.size, cfg["norm_eps"])
+        self.q_layernorm, self.k_layernorm = rms_norm(self.size, cfg["norm_eps"]), rms_norm(self.size, cfg["norm_eps"])
 
     def forward(self, x: Tensor, cos: Tensor, sin: Tensor) -> Tensor:
         n = x.shape[0]
@@ -117,9 +145,7 @@ class VisionAttention(nn.Module):
         q = rotate(q.float(), cos, sin).to(x.dtype).transpose(0, 1)[None]
         k = rotate(k.float(), cos, sin).to(x.dtype).transpose(0, 1)[None]
         v = v.transpose(0, 1)[None]
-        repeat = self.heads // self.kv
-        k, v = k.repeat_interleave(repeat, dim=1), v.repeat_interleave(repeat, dim=1)
-        out = F.scaled_dot_product_attention(q, k, v, scale=1 / math.sqrt(self.size))
+        out = attend(q, k, v, scale=1 / math.sqrt(self.size))
         return self.out_proj(out[0].transpose(0, 1).reshape(n, -1))
 
 
@@ -150,7 +176,7 @@ class VisionLayer(nn.Module):
         super().__init__()
         d, eps = cfg["hidden_size"], cfg["norm_eps"]
         self.kind = kind
-        self.operator_norm, self.ffn_norm = RMSNorm(d, eps), RMSNorm(d, eps)
+        self.operator_norm, self.ffn_norm = rms_norm(d, eps), rms_norm(d, eps)
         if kind == "conv":
             self.conv = VisionConvolution(cfg)
         else:
@@ -164,7 +190,7 @@ class VisionTower(nn.Module):
         d = cfg["hidden_size"]
         patch_in = cfg.get("temporal_patch_size", 1) * cfg["in_channels"] * cfg["patch_size"] ** 2
         self.patchifier = linear(patch_in, d)  # no bias in the checkpoint
-        self.embedding_norm = RMSNorm(d, cfg["norm_eps"])
+        self.embedding_norm = rms_norm(d, cfg["norm_eps"])
         self.layers = nn.ModuleList(VisionLayer(cfg, kind) for kind in cfg["layer_types"])
 
     def forward(self, patches: Tensor, rows: int, columns: int, cos: Tensor, sin: Tensor) -> Tensor:
@@ -232,17 +258,16 @@ class TextAttention(nn.Module):
         self.heads, self.kv, self.size = h, kv, size
         self.q_proj, self.k_proj, self.v_proj = linear(d, h * size), linear(d, kv * size), linear(d, kv * size)
         self.gate_proj, self.o_proj = linear(d, h), linear(h * size, d)
-        self.q_norm, self.k_norm = RMSNorm(size, cfg["norm_eps"]), RMSNorm(size, cfg["norm_eps"])
+        self.q_norm, self.k_norm = rms_norm(size, cfg["norm_eps"]), rms_norm(size, cfg["norm_eps"])
 
-    def forward(self, x: Tensor, cos: Tensor, sin: Tensor, mask: Tensor) -> Tensor:
+    def forward(self, x: Tensor, cos: Tensor, sin: Tensor, mask: Tensor | None,
+                window: int | None = None) -> Tensor:
         n = x.shape[1]
         q = self.q_norm(self.q_proj(x).view(1, n, self.heads, self.size)).transpose(1, 2)
         k = self.k_norm(self.k_proj(x).view(1, n, self.kv, self.size)).transpose(1, 2)
         v = self.v_proj(x).view(1, n, self.kv, self.size).transpose(1, 2)
         q, k = rotate(q, cos, sin), rotate(k, cos, sin)
-        repeat = self.heads // self.kv
-        k, v = k.repeat_interleave(repeat, dim=1), v.repeat_interleave(repeat, dim=1)
-        out = F.scaled_dot_product_attention(q, k, v, attn_mask=mask, scale=1 / math.sqrt(self.size))
+        out = attend(q, k, v, scale=1 / math.sqrt(self.size), mask=mask, causal_window=window)
         gate = torch.sigmoid(self.gate_proj(x)).transpose(1, 2)[..., None]  # (1, H, L, 1)
         return self.o_proj((out * gate).transpose(1, 2).reshape(1, n, -1))
 
@@ -252,10 +277,10 @@ class TextLayer(nn.Module):
         super().__init__()
         d, eps = cfg["hidden_size"], cfg["norm_eps"]
         self.kind = kind
-        self.operator_norm, self.ffn_norm = RMSNorm(d, eps), RMSNorm(d, eps)
+        self.operator_norm, self.ffn_norm = rms_norm(d, eps), rms_norm(d, eps)
         self.sandwich = cfg.get("use_sandwich_norm", False)
         if self.sandwich:
-            self.post_operator_norm, self.post_ffn_norm = RMSNorm(d, eps), RMSNorm(d, eps)
+            self.post_operator_norm, self.post_ffn_norm = rms_norm(d, eps), rms_norm(d, eps)
         if kind == "conv":
             self.conv = ShortConvolution(cfg)
         else:
@@ -281,7 +306,7 @@ class LanguageModel(nn.Module):
         d = cfg["hidden_size"]
         self.embed_tokens = nn.Embedding(cfg["vocab_size"], d, dtype=torch.float16)
         self.layers = nn.ModuleList(TextLayer(cfg, kind) for kind in cfg["layer_types"])
-        self.embedding_norm = RMSNorm(d, cfg["norm_eps"])
+        self.embedding_norm = rms_norm(d, cfg["norm_eps"])
 
 
 # ---------------------------------------------------------------- whole
@@ -330,7 +355,7 @@ class D1(nn.Module):
         if missing or unexpected:
             raise ValueError(f"weights do not match: missing {missing[:5]}, unexpected {unexpected[:5]}")
 
-    def forward(self, patches: Tensor, ids: Tensor, full_mask: Tensor, sliding_mask: Tensor, slots: Tensor,
+    def forward(self, patches: Tensor, ids: Tensor, full_mask: Tensor, sliding_mask: Tensor | None, slots: Tensor,
                 tokens: Tensor) -> Tensor:
         vision = self.vision_tower(patches, self.rows, self.columns, self.vision_cos, self.vision_sin)
         features = self.multi_modal_projector(vision)
@@ -344,8 +369,12 @@ class D1(nn.Module):
                 o = layer.conv(o)
             else:
                 cos, sin = getattr(self, f"{layer.kind}_cos"), getattr(self, f"{layer.kind}_sin")
-                mask = full_mask if layer.kind == "full_attention" else sliding_mask
-                o = layer.self_attn(o, cos, sin, mask)
+                if layer.kind == "full_attention":
+                    o = layer.self_attn(o, cos, sin, full_mask)
+                elif COMPOSITE:  # the composite builds the causal window itself
+                    o = layer.self_attn(o, cos, sin, None, window=self.text_cfg["sliding_window"])
+                else:
+                    o = layer.self_attn(o, cos, sin, sliding_mask)
             if layer.sandwich:
                 o = layer.post_operator_norm(o)
             h = h + o

@@ -22,6 +22,7 @@ from pathlib import Path
 import numpy as np
 import torch
 
+import d1_torch
 from d1_torch import D1, load_mlx_checkpoint
 
 NEG = float("-inf")
@@ -60,7 +61,7 @@ def compare(label: str, scores: torch.Tensor, dump: dict) -> None:
           f"(MLX {yes_probability(want, dump):.4f})")
 
 
-def quantize(model: D1, inputs: dict, compression: str) -> torch.nn.Module:
+def quantize(model: D1, inputs: dict, compression: str, embedding: bool = True) -> torch.nn.Module:
     if compression == "none":
         return model
     from coreai_opt.base_model_compressor import ExportBackend
@@ -79,7 +80,8 @@ def quantize(model: D1, inputs: dict, compression: str) -> torch.nn.Module:
         "global_config": None,
         "module_type_configs": {
             "torch.nn.modules.linear.Linear": weight_only,
-            "torch.nn.modules.sparse.Embedding": weight_only,
+            # float16 instead keeps lookups plain row reads (see --float16-embedding).
+            "torch.nn.modules.sparse.Embedding": weight_only if embedding else None,
         },
     }})
     quantizer = Quantizer(model, config)
@@ -89,17 +91,37 @@ def quantize(model: D1, inputs: dict, compression: str) -> torch.nn.Module:
     return finalized
 
 
-def export(model: torch.nn.Module, inputs: dict, path: Path) -> None:
+class WithoutSlidingMask(torch.nn.Module):
+    """The composite model builds sliding windows itself, so its graph has no sliding mask input."""
+
+    def __init__(self, model: torch.nn.Module):
+        super().__init__()
+        self.model = model
+
+    def forward(self, patches, ids, full_mask, slots, tokens):
+        return self.model(patches, ids, full_mask, None, slots, tokens)
+
+
+def export(model: torch.nn.Module, inputs: dict, path: Path, composite: bool = False) -> None:
     import coreai_torch
+    from coreai_models.export.externalize import EXTERNALIZE_SPECS
     from coreai_models.export.mlir_ops import register_custom_torch_lowering, remove_functionalization
 
-    with torch.no_grad():
-        program = torch.export.export(model, args=tuple(inputs.values()))
-    program = program.run_decompositions(coreai_torch.get_decomp_table())
-    remove_functionalization(program)
+    def export_fn(module: torch.nn.Module, pass_inputs_as_kwargs: bool = True):
+        with torch.no_grad():
+            program = torch.export.export(module, args=tuple(inputs.values()))
+        program = program.run_decompositions(coreai_torch.get_decomp_table())
+        remove_functionalization(program)
+        return program
+
     converter = coreai_torch.TorchConverter(mode=coreai_torch.TorchConverter.Mode.RELEASE)
-    converter.add_exported_program(program, input_names=list(inputs), output_names=["scores"],
-                                   entrypoint_name="main")
+    if composite:
+        # As Apple's macOS export: composite ops become single Core AI ops.
+        converter.add_pytorch_module(model, export_fn=export_fn, externalize_modules=EXTERNALIZE_SPECS,
+                                     input_names=list(inputs), output_names=["scores"], entrypoint_name="main")
+    else:
+        converter.add_exported_program(export_fn(model), input_names=list(inputs), output_names=["scores"],
+                                       entrypoint_name="main")
     register_custom_torch_lowering(converter)
     path.parent.mkdir(parents=True, exist_ok=True)
     converter.to_coreai().save_asset(path)
@@ -111,7 +133,12 @@ def main() -> None:
     parser.add_argument("--inputs", type=Path, required=True)
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--compression", choices=["4bit", "8bit", "none"], default="4bit")
+    parser.add_argument("--float16-embedding", action="store_true",
+                        help="leave the embedding table unquantized (an experiment on where time goes)")
+    parser.add_argument("--composite", action="store_true",
+                        help="norms and attention as Core AI composite ops, as Apple's macOS export path")
     args = parser.parse_args()
+    d1_torch.COMPOSITE = args.composite
 
     dump = json.loads(args.inputs.read_text())
     config, tensors = load_mlx_checkpoint(args.checkpoint)
@@ -120,6 +147,9 @@ def main() -> None:
     model.load_mlx(tensors)
     model.eval()
     inputs = build_inputs(dump)
+    if args.composite:
+        del inputs["sliding_mask"]
+        model = WithoutSlidingMask(model).eval()
 
     # The mirror must agree with MLX before anything is exported.
     device = "mps" if torch.backends.mps.is_available() else "cpu"
@@ -128,12 +158,13 @@ def main() -> None:
     model.to("cpu")
 
     started = time.time()
-    model = quantize(model, inputs, args.compression)
+    model = quantize(model, inputs, args.compression, embedding=not args.float16_embedding)
     if args.compression != "none":
         with torch.no_grad():
             compare(f"PyTorch {args.compression} (cpu)", model(**inputs), dump)
-    path = args.out / f"d1-{args.compression}.aimodel"
-    export(model, inputs, path)
+    suffix = ("-composite" if args.composite else "") + ("-f16embed" if args.float16_embedding else "")
+    path = args.out / f"d1-{args.compression}{suffix}.aimodel"
+    export(model, inputs, path, composite=args.composite)
     print(f"wrote {path} in {time.time() - started:.0f}s")
     (args.out / "geometry.json").write_text(json.dumps({
         "rows": dump["rows"], "columns": dump["columns"], "length": len(dump["ids"]),

@@ -84,6 +84,8 @@ extension Studio {
     let questions = Studio.questions(for: steps)
     let present = Set(library.map(\.path))
     let engine = engine
+    // The same model "Look Now" would ask, so the chain reads that model's answers.
+    let decider = decisionModel?.alias ?? selectedDecisionModel
     isFiltering = true
     filterProblem = nil
     filterTask = Task {
@@ -97,8 +99,8 @@ extension Studio {
         if !questions.isEmpty {
           do {
             decisions = try await engine.decisions(
-              folder: folder, paths: scores.paths.filter(present.contains), questions: questions,
-              asking: false, onProgress: { _ in })
+              folder: folder, model: decider, paths: scores.paths.filter(present.contains),
+              questions: questions, asking: false, onProgress: { _ in })
           } catch {
             // The chain still runs by description; say why the saved answers are not in it.
             if generation == filterGeneration { status = EngineDiagnosis.message(for: error) }
@@ -122,7 +124,8 @@ extension Studio {
 
   /// The decision model that answers careful steps, as the model list describes it.
   var decisionModel: ModelInfo? {
-    decisionModels.first { $0.isDefault } ?? decisionModels.first
+    decisionModels.first { $0.alias == selectedDecisionModel }
+      ?? decisionModels.first { $0.isDefault } ?? decisionModels.first
   }
 
   private static func questions(for steps: [FilterStep]) -> [String] {
@@ -158,7 +161,8 @@ extension Studio {
       }
       let answered = await perform(.deciding) { progress in
         try await engine.decisions(
-          folder: folder, paths: paths, questions: [question], asking: true, onProgress: progress)
+          folder: folder, model: model.alias, paths: paths, questions: [question], asking: true,
+          onProgress: progress)
       }
       if let answered {
         let skipped = answered.unanswered.count + answered.unreadable.count

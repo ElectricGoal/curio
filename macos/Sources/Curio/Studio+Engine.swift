@@ -175,6 +175,7 @@ extension Studio {
       modelStorage = response.storage
       decisionModels = response.decision
       adoptUsableModel()
+      adoptInstalledDecisionModel()
     } catch {
       status = "Could not load the model list."
     }
@@ -191,6 +192,21 @@ extension Studio {
       models.first { $0.installed } ?? models.first { $0.isDefault && $0.available }
       ?? models.first { $0.available }
     if let fallback, fallback.alias != selectedModel { selectModel(fallback.alias) }
+  }
+
+  /// Careful steps go to a decision model that is on this Mac when the chosen
+  /// one is not: the only one downloaded is the one meant.
+  private func adoptInstalledDecisionModel() {
+    let chosen = decisionModels.first { $0.alias == selectedDecisionModel }
+    if chosen?.installed == true { return }
+    if let installed = decisionModels.first(where: \.installed) {
+      selectDecisionModel(installed.alias)
+      // Said, so the change is not a surprise on the Filter page.
+      status = "Careful filter steps now use \(installed.name)"
+    } else if chosen == nil, let fallback = decisionModels.first(where: \.isDefault) ?? decisionModels.first {
+      // The remembered model is no longer one the app knows.
+      selectDecisionModel(fallback.alias)
+    }
   }
 
   func refreshModels() {

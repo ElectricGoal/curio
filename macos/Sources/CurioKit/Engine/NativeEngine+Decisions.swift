@@ -3,14 +3,10 @@ import Foundation
 /// Filter steps answered by the decision model: it looks at each image and
 /// says how likely "yes" is. Slow, so every answer is kept (`DecisionStore`).
 extension NativeEngine {
-  /// The model that answers; there is one.
-  static let decisionAlias = DecisionCatalog.defaultAlias
-
   public func decisions(
-    folder: URL, paths: [String], questions: [String], asking: Bool,
+    folder: URL, model alias: String, paths: [String], questions: [String], asking: Bool,
     onProgress: @escaping ProgressHandler
   ) async throws -> DecisionScores {
-    let alias = Self.decisionAlias
     guard !questions.isEmpty, !paths.isEmpty else {
       return .empty(model: alias, questions: questions)
     }
@@ -20,7 +16,7 @@ extension NativeEngine {
     }
     let store = try DecisionStore(folder: folder)
     defer { store.close() }
-    let key = Self.answersKey
+    let key = Self.answersKey(for: alias)
     let known = try questions.map { try store.answers(model: key, question: $0) }
     // Checking every file's date takes a while in a large folder; not on the engine's own time.
     let survey = await Task.detached {
@@ -37,9 +33,10 @@ extension NativeEngine {
 
     let name = DecisionCatalog.entry(alias)?.name ?? alias
     onProgress(EngineProgress("Loading \(name)", estimate: .start))
-    deciding += 1
+    decidingWith[alias, default: 0] += 1
     defer {
-      deciding -= 1
+      let left = (decidingWith[alias] ?? 1) - 1
+      decidingWith[alias] = left > 0 ? left : nil
       scheduleIdleUnload()
     }
     let model = try await decisionModel(alias)
@@ -86,10 +83,11 @@ extension NativeEngine {
       unreadable: unreadable)
   }
 
-  /// Names the answers kept on disk. The number changes whenever the same
-  /// image and question could get a different answer: new question wording
-  /// around the user's text, a different picture size, a different checkpoint.
-  static let answersKey = "\(decisionAlias)/1"
+  /// Names the answers a model has given, as kept on disk: each model's are
+  /// its own. The number changes whenever the same image and question could
+  /// get a different answer from it: new question wording around the user's
+  /// text, a different picture size, a different checkpoint.
+  static func answersKey(for alias: String) -> String { "\(alias)/1" }
 
   struct Waiting: Sendable {
     let path: String
@@ -137,13 +135,32 @@ extension NativeEngine {
   }
 
   /// The decision model, loading it if needed; one load serves every waiting request.
+  ///
+  /// Only one is in memory at a time: each takes gigabytes, and the smaller
+  /// one exists for Macs that cannot spare more. So a different model is let
+  /// go of before this one is read, and refused while it is still answering.
   private func decisionModel(_ alias: String) async throws -> any DecisionModel {
+    while let pending = loadingDecision {
+      if pending.alias == alias { return try await pending.task.value }
+      _ = await pending.task.result
+      // Its owner clears it too, but may not have run yet; without this the wait would spin.
+      if loadingDecision?.id == pending.id { loadingDecision = nil }
+    }
     if let loadedDecision, loadedDecision.alias == alias { return loadedDecision.model }
-    if let pending = loadingDecision, pending.alias == alias { return try await pending.task.value }
+    // The caller has counted itself under `alias`; anything else is another model at work.
+    guard decidingWith.keys.allSatisfy({ $0 == alias }) else {
+      throw EngineError.busy(
+        "Another model is looking at images. Let it finish or stop it, then try again.")
+    }
+    if loadedDecision != nil {
+      loadedDecision = nil
+      D1DecisionModel.releaseBuffers()
+    }
     let loader = loadDecisionModel
+    let id = UUID()
     let task = Task { try await loader(alias) }
-    loadingDecision = (alias, task)
-    defer { if loadingDecision?.alias == alias { loadingDecision = nil } }
+    loadingDecision = (id, alias, task)
+    defer { if loadingDecision?.id == id { loadingDecision = nil } }
     let model = try await task.value
     loadedDecision = (alias, model)
     return model

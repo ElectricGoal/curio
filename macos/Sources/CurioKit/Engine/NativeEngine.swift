@@ -35,9 +35,10 @@ public actor NativeEngine: SearchEngine {
   let decisionLibrary: DecisionLibrary
   let loadDecisionModel: DecisionLoader
   var loadedDecision: (alias: String, model: any DecisionModel)?
-  var loadingDecision: (alias: String, task: Task<any DecisionModel, Error>)?
+  var loadingDecision: (id: UUID, alias: String, task: Task<any DecisionModel, Error>)?
   /// How many requests are asking the decision model questions right now.
-  var deciding = 0
+  var decidingWith: [String: Int] = [:]
+  var deciding: Int { decidingWith.values.reduce(0, +) }
 
   /// - Parameters:
   ///   - dataRoot: where models, caches and timings are kept.
@@ -131,7 +132,7 @@ public actor NativeEngine: SearchEngine {
   /// Whether `alias` is being loaded or used by an index run right now.
   private func isInUse(_ alias: String) -> Bool {
     indexingModel == alias || loading?.alias == alias || loadingDecision?.alias == alias
-      || (deciding > 0 && loadedDecision?.alias == alias)
+      || decidingWith[alias] != nil
   }
 
   func scheduleIdleUnload() {

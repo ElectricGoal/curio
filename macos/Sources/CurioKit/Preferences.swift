@@ -24,11 +24,14 @@ public struct Preferences: Codable, Equatable, Sendable {
   /// The filter chain, kept between launches.
   public var filterSteps: [FilterStep]
   public var appearance: Appearance
+  /// The decision model careful filter steps use.
+  public var decisionModel: String
 
   public init(
     model: String = Preferences.defaultModel, folder: String? = nil,
     recentFolders: [String] = [], thumbnailSize: Double = 180, sort: PhotoSort = .name,
-    albums: [String] = [], filterSteps: [FilterStep] = [], appearance: Appearance = .system
+    albums: [String] = [], filterSteps: [FilterStep] = [], appearance: Appearance = .system,
+    decisionModel: String = DecisionCatalog.defaultAlias
   ) {
     self.model = model
     self.folder = folder
@@ -38,6 +41,7 @@ public struct Preferences: Codable, Equatable, Sendable {
     self.albums = albums
     self.filterSteps = filterSteps
     self.appearance = appearance
+    self.decisionModel = decisionModel
   }
 
   /// Tolerates files written by earlier versions, which stored fewer keys.
@@ -56,6 +60,8 @@ public struct Preferences: Codable, Equatable, Sendable {
     filterSteps = (try? values.decodeIfPresent([FilterStep].self, forKey: .filterSteps)) ?? []
     let storedAppearance = try? values.decodeIfPresent(String.self, forKey: .appearance)
     appearance = storedAppearance.flatMap(Appearance.init) ?? .system
+    let storedDecision = try? values.decodeIfPresent(String.self, forKey: .decisionModel)
+    decisionModel = storedDecision.flatMap { $0.isEmpty ? nil : $0 } ?? fallback.decisionModel
   }
 
   /// A copy with `path` as the current folder and at the front of the recents.

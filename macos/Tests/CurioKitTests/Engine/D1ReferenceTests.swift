@@ -73,6 +73,25 @@ final class D1ReferenceTests: XCTestCase {
     XCTAssertEqual(alone[0], reference.answerAlone, accuracy: 0.01)
   }
 
+  /// The four-bit checkpoint runs on the same code: only how its weights are packed differs.
+  func testTheFourBitCheckpointMatchesItsReference() async throws {
+    let alias = D1Fixtures.compactAlias
+    let reference = try D1Fixtures.reference(of: alias)
+    let model = try await D1Fixtures.compactModel()
+    let rows = try await model.featureRows(of: D1Fixtures.picture(of: alias), count: 32)
+    XCTAssertEqual(rows.count, reference.featuresShape[0])
+    for sample in reference.features {
+      let worst = zip(rows[sample.index], sample.values).map { abs($0 - $1) }.max() ?? 1
+      XCTAssertLessThan(worst, 0.05, "features of token \(sample.index)")
+    }
+    let answers = try await model.decide(
+      image: D1Fixtures.picture(of: alias), questions: reference.questions)
+    XCTAssertEqual(answers.count, reference.answers.count)
+    for (own, expected) in zip(answers, reference.answers) {
+      XCTAssertEqual(own, expected, accuracy: 0.01)
+    }
+  }
+
   func testAnswerDoesNotDependOnTheOtherQuestions() async throws {
     let reference = try D1Fixtures.reference()
     let model = try await D1Fixtures.model()

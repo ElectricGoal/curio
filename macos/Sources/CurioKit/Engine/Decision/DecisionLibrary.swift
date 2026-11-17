@@ -43,7 +43,32 @@ public enum DecisionCatalog {
         .init(
           path: "model.safetensors", size: 2_216_067_578,
           sha256: "b88f8e9e2c90597d9f913d52a9d2f9fff4d5338e47ea07ca8ab4e774f5ae4869"),
-      ])
+      ]),
+    Entry(
+      alias: "d1-2b-4bit", name: "Liquid d1-2B (4-bit)",
+      summary:
+        "The same model packed smaller, for Macs with less memory: about 1.4 GB to download and about 2.2 GB of memory while it runs, at the same speed. Its answers are nearly the same; an image the full version is unsure about can go the other way.",
+      source: URL(
+        string:
+          "https://huggingface.co/LiquidAI/d1-2B-MLX-4bit/resolve/afeb4a3141bf4040cbc312d0ccc14eac719024c5"
+      )!,
+      files: [
+        .init(
+          path: "config.json", size: 3_651,
+          sha256: "43539f950179c6b6fd40e3c06c44772073b80dca0a36e49645c7151442211774"),
+        .init(
+          path: "calibration.json", size: 4_924,
+          sha256: "e534464458f485d800fe6cc896ac241590bbc8cd54f5af08f7b3064b0d884d69"),
+        .init(
+          path: "LICENSE", size: 10_574,
+          sha256: "4d28ca14dedc0b3d0fcc2b3339f0e79931faa33874f3d24f522183a8fc70068c"),
+        .init(
+          path: "tokenizer.json", size: 17_908_258,
+          sha256: "a39eed58008cbcbc09e5b629b81338a654269c64cd13348aaa6090f4db75c7e7"),
+        .init(
+          path: "model.safetensors", size: 1_351_860_276,
+          sha256: "0b638f4d347f14411e4b2e66b10d0c8ec952156840844d0260bbd2f33bcc2a26"),
+      ]),
   ]
 
   public static func entry(_ alias: String) -> Entry? {

@@ -117,6 +117,89 @@ final class StudioFilterTests: XCTestCase {
     XCTAssertFalse(engine.decisionRequests.contains { $0.asking })
   }
 
+  // MARK: - Choosing between decision models
+
+  private var bothModels: [ModelInfo] {
+    [
+      FakeEngine.model("d1-2b", installed: true, isDefault: true),
+      FakeEngine.model("d1-2b-4bit", installed: true),
+    ]
+  }
+
+  func testCarefulStepsAskTheSelectedModelAndTheChoiceIsRemembered() async throws {
+    engine.decisionList = bothModels
+    let studio = try await studio(careful: true)
+    XCTAssertEqual(studio.decisionModel?.alias, "d1-2b", "the default until another is chosen")
+
+    studio.selectDecisionModel("d1-2b-4bit")
+    try await wait("the chain to be read again") {
+      !studio.isFiltering && engine.decisionModelsAsked.last == "d1-2b-4bit"
+    }
+    studio.lookAtImages(for: studio.filterSteps[0].id)
+    try await wait("the model to look") { engine.decisionRequests.contains { $0.asking } }
+    try await wait("the run to end") { studio.activity == nil && !studio.isFiltering }
+
+    let asking = zip(engine.decisionRequests, engine.decisionModelsAsked).filter { $0.0.asking }
+    XCTAssertEqual(asking.map(\.1), ["d1-2b-4bit"])
+    XCTAssertEqual(studio.decisionModel?.alias, "d1-2b-4bit")
+    let saved = PreferencesStore(url: folder.appendingPathComponent(".prefs.json")).load()
+    XCTAssertEqual(saved.decisionModel, "d1-2b-4bit")
+  }
+
+  func testTheOnlyInstalledModelIsTheOneUsed() async throws {
+    engine.decisionList = [
+      FakeEngine.model("d1-2b", installed: false, isDefault: true),
+      FakeEngine.model("d1-2b-4bit", installed: true),
+    ]
+    let studio = try await studio(careful: true)
+
+    XCTAssertEqual(studio.decisionModel?.alias, "d1-2b-4bit")
+    studio.lookAtImages(for: studio.filterSteps[0].id)
+    try await wait("the model to look") { engine.decisionRequests.contains { $0.asking } }
+    try await wait("the run to end") { studio.activity == nil && !studio.isFiltering }
+    XCTAssertNil(studio.alert)
+    XCTAssertEqual(engine.decisionModelsAsked.last, "d1-2b-4bit")
+  }
+
+  func testAChosenModelThatIsInstalledIsKeptWhenAnotherArrives() async throws {
+    try JSONEncoder().encode(Preferences(decisionModel: "d1-2b-4bit"))
+      .write(to: folder.appendingPathComponent(".prefs.json"))
+    engine.decisionList = bothModels
+    let studio = try await studio(careful: false)
+
+    XCTAssertEqual(studio.decisionModel?.alias, "d1-2b-4bit")
+  }
+
+  func testRemovingTheSelectedModelMovesCarefulStepsToTheOneLeftAndSaysSo() async throws {
+    engine.decisionList = bothModels
+    let studio = try await studio(careful: true)
+    XCTAssertEqual(studio.decisionModel?.alias, "d1-2b")
+
+    engine.decisionList = [
+      FakeEngine.model("d1-2b", installed: false, isDefault: true),
+      FakeEngine.model("d1-2b-4bit", installed: true),
+    ]
+    await studio.loadModels()
+
+    XCTAssertEqual(studio.decisionModel?.alias, "d1-2b-4bit")
+    XCTAssertTrue(studio.status.contains("D1-2B-4BIT"), studio.status)
+    try await wait("the chain to be read with the other model") {
+      !studio.isFiltering && engine.decisionModelsAsked.last == "d1-2b-4bit"
+    }
+  }
+
+  func testAModelTheAppNoLongerKnowsGivesWayToTheDefault() async throws {
+    try JSONEncoder().encode(Preferences(decisionModel: "gone"))
+      .write(to: folder.appendingPathComponent(".prefs.json"))
+    engine.decisionList = [
+      FakeEngine.model("d1-2b", installed: false, isDefault: true),
+      FakeEngine.model("d1-2b-4bit", installed: false),
+    ]
+    let studio = try await studio(careful: false)
+
+    XCTAssertEqual(studio.selectedDecisionModel, "d1-2b")
+  }
+
   func testTheChoiceIsSavedWithTheStepAndStrictnessDoesNotChangeWhoIsWaiting() async throws {
     let studio = try await studio(careful: true)
     studio.updateStep(studio.filterSteps[0].id) { $0.strictness = .strict }

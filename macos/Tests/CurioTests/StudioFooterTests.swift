@@ -108,9 +108,14 @@ final class StudioFooterTests: XCTestCase {
     XCTAssertNil(studio.footerMessage)
   }
 
-  func testSettingsIsReachedFromTheFooterNotTheSidebar() {
-    XCTAssertFalse(Page.sidebar.contains(.settings))
-    XCTAssertEqual(Page.sidebar, [.library, .duplicates, .cleanup, .filter])
+  func testSettingsIsReachedFromTheFooterNotTheAlbumTabs() {
+    XCTAssertFalse(Page.tabs.contains(.settings))
+    XCTAssertEqual(Page.tabs, [.library, .duplicates, .cleanup, .filter])
     XCTAssertTrue(Page.allCases.contains(.settings))
+  }
+
+  func testEachAlbumIsListedOnceWhateverItsSpelling() {
+    let albums = Studio.albums(["/photos/trip", "/photos/trip/", "/photos/./trip", "/photos/home"])
+    XCTAssertEqual(albums.map(\.path), ["/photos/trip", "/photos/home"], "in the order added")
   }
 }

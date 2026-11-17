@@ -38,32 +38,75 @@ public struct FilterStep: Codable, Equatable, Identifiable, Sendable {
   }
 
   public var id: UUID
+  /// The step's permanent number, shown as "#3": given once, kept through
+  /// reordering, so a trace keeps pointing at the same node. 0 until assigned.
+  public var number: Int
   public var action: Action
   public var text: String
   public var strictness: Strictness
-  /// Whether the decision model looks at each image for this step. Slower and
+  /// The decision model that looks at each image for this step, or nil to
+  /// match the description against the album's search index instead.
+  /// `defaultModel` follows the one chosen in Settings; an alias pins one.
+  public var model: String?
+
+  /// A step's model when it follows the decision model chosen in Settings.
+  public static let defaultModel = "default"
+
+  /// Whether a decision model looks at each image for this step. Slower and
   /// more accurate than matching the description against the search index.
-  public var careful: Bool
+  public var careful: Bool {
+    get { model != nil }
+    set { model = newValue ? (model ?? Self.defaultModel) : nil }
+  }
 
   public init(
-    id: UUID = UUID(), action: Action, text: String, strictness: Strictness = .balanced,
-    careful: Bool = false
+    id: UUID = UUID(), number: Int = 0, action: Action, text: String,
+    strictness: Strictness = .balanced, careful: Bool = false, model: String? = nil
   ) {
     self.id = id
+    self.number = number
     self.action = action
     self.text = text
     self.strictness = strictness
-    self.careful = careful
+    self.model = model ?? (careful ? Self.defaultModel : nil)
   }
+
+  private enum CodingKeys: String, CodingKey { case id, number, action, text, strictness, model, careful }
 
   public init(from decoder: Decoder) throws {
     let values = try decoder.container(keyedBy: CodingKeys.self)
     id = try values.decode(UUID.self, forKey: .id)
+    number = try values.decodeIfPresent(Int.self, forKey: .number) ?? 0
     action = try values.decode(Action.self, forKey: .action)
     text = try values.decode(String.self, forKey: .text)
     strictness = try values.decode(Strictness.self, forKey: .strictness)
-    // Steps saved before careful steps existed are plain ones.
-    careful = try values.decodeIfPresent(Bool.self, forKey: .careful) ?? false
+    // Steps saved before each could pick its model: "careful" meant the chosen one.
+    let wasCareful = try values.decodeIfPresent(Bool.self, forKey: .careful) ?? false
+    model = try values.decodeIfPresent(String.self, forKey: .model)
+      ?? (wasCareful ? Self.defaultModel : nil)
+  }
+
+  public func encode(to encoder: Encoder) throws {
+    var values = encoder.container(keyedBy: CodingKeys.self)
+    try values.encode(id, forKey: .id)
+    try values.encode(number, forKey: .number)
+    try values.encode(action, forKey: .action)
+    try values.encode(text, forKey: .text)
+    try values.encode(strictness, forKey: .strictness)
+    try values.encodeIfPresent(model, forKey: .model)
+  }
+
+  /// Gives numbers to steps that have none (saved before numbers existed, or
+  /// just added), after the highest already given, in the chain's order.
+  public static func numbered(_ steps: [FilterStep]) -> [FilterStep] {
+    var next = (steps.map(\.number).max() ?? 0) + 1
+    return steps.map { step in
+      guard step.number == 0 else { return step }
+      var numbered = step
+      numbered.number = next
+      next += 1
+      return numbered
+    }
   }
 
   /// Steps without words do nothing yet.
@@ -76,6 +119,29 @@ public struct FilterStep: Codable, Equatable, Identifiable, Sendable {
   public var question: String {
     "Does this image match the description “\(text.trimmingCharacters(in: .whitespaces))”?"
   }
+}
+
+/// What one step decided about one image, and why: the unit of a trace.
+public struct FilterVerdict: Equatable, Sendable {
+  public enum Evidence: Equatable, Sendable {
+    /// The step has no words yet, so it let everything through.
+    case inactive
+    /// Matched against the search index: how much better than "a photo" the
+    /// description fits, and how much the step's strictness needs.
+    case description(lead: Float, needed: Float)
+    /// The decision model's answer: how sure it is the image fits, and how sure it must be.
+    case model(alias: String, yes: Double, needed: Double)
+    /// A model step whose model has not looked at this image (or cannot read
+    /// it), so the description decided for now.
+    case notLookedAt(alias: String, unreadable: Bool, lead: Float, needed: Float)
+  }
+
+  public let step: UUID
+  /// Whether the image fits the step's description.
+  public let matched: Bool
+  /// Whether it went on to the next step.
+  public let kept: Bool
+  public let evidence: Evidence
 }
 
 /// What a filter chain did to a folder, stage by stage.
@@ -104,17 +170,40 @@ public struct FilterRun: Equatable, Sendable {
   public let all: [String]
   /// One per step, in order.
   public let stages: [Stage]
+  /// For each image, what every step it reached decided, in order. Its last
+  /// verdict is where it left the chain, unless it made it to the result.
+  public let verdicts: [String: [FilterVerdict]]
 
   public var result: [String] { stages.last?.remaining ?? all }
+
+  /// An image's way through the chain: what each step it reached decided.
+  public func trace(of path: String) -> [FilterVerdict] { verdicts[path] ?? [] }
+
+  /// One decision model's answers, as for a chain whose model steps all use
+  /// it: steps following the default are taken to mean that model.
+  public init(
+    steps: [FilterStep], scores: PromptScores, decisions: DecisionScores?,
+    among: Set<String>? = nil
+  ) {
+    let resolved = steps.map { step -> FilterStep in
+      guard let decisions, step.model == FilterStep.defaultModel else { return step }
+      var step = step
+      step.model = decisions.model
+      return step
+    }
+    self.init(
+      steps: resolved, scores: scores, answers: decisions.map { [$0.model: $0] } ?? [:], among: among)
+  }
 
   /// Runs `steps` over images scored against `baseline` first, then one prompt
   /// per active step, in order. With `among`, images not in it (moved or
   /// deleted since indexing) are left out from the start.
   ///
-  /// A careful step goes by the decision model's answer in `decisions` for
-  /// each image that has one, and by the description for the rest.
+  /// A model step goes by its own model's answer in `answers` (keyed by model)
+  /// for each image that has one, and by the description for the rest. Steps
+  /// following `FilterStep.defaultModel` must be resolved to a model first.
   public init(
-    steps: [FilterStep], scores: PromptScores, decisions: DecisionScores? = nil,
+    steps: [FilterStep], scores: PromptScores, answers: [String: DecisionScores] = [:],
     among: Set<String>? = nil
   ) {
     let width = scores.prompts
@@ -124,39 +213,59 @@ public struct FilterRun: Equatable, Sendable {
     var current = rows.filter { among?.contains(scores.paths[$0]) ?? true }
     let all = current.map { scores.paths[$0] }
     var stages: [Stage] = []
+    var verdicts: [String: [FilterVerdict]] = [:]
     for step in steps {
       guard step.isActive else {
         stages.append(Stage(remaining: current.map { scores.paths[$0] }, dropped: []))
+        for row in current {
+          verdicts[scores.paths[row], default: []].append(
+            FilterVerdict(step: step.id, matched: false, kept: true, evidence: .inactive))
+        }
         continue
       }
-      let lead = step.strictness.lead
+      let needed = step.strictness.lead
       let index = column
       let confidence = step.strictness.confidence
-      let asked = step.careful ? decisions?.questions.firstIndex(of: step.question) : nil
-      let verdict = { (row: Int) -> Double? in
-        guard let asked, let own = decisions?.answers[scores.paths[row]] else { return nil }
-        return own[asked]
-      }
-      let matches = { (row: Int) -> Bool in
-        if let probability = verdict(row) { return probability >= confidence }
-        return scores.scores[row * width + index] - base[row] >= lead
-      }
+      let decisions = step.model.flatMap { answers[$0] }
+      let asked = decisions?.questions.firstIndex(of: step.question)
       let unreadable = Set(decisions?.unreadable ?? [])
-      let unchecked =
-        step.careful
-        ? current.filter { verdict($0) == nil && !unreadable.contains(scores.paths[$0]) } : []
-      let kept = current.filter { step.action == .keep ? matches($0) : !matches($0) }
-      let keptSet = Set(kept)
+      var kept: [Int] = []
+      var dropped: [Int] = []
+      var unchecked: [Int] = []
+      for row in current {
+        let path = scores.paths[row]
+        let lead = scores.scores[row * width + index] - base[row]
+        let evidence: FilterVerdict.Evidence
+        let matched: Bool
+        if let alias = step.model {
+          if let asked, let yes = decisions?.answers[path]?[asked] {
+            evidence = .model(alias: alias, yes: yes, needed: confidence)
+            matched = yes >= confidence
+          } else {
+            let cannotRead = unreadable.contains(path)
+            if !cannotRead { unchecked.append(row) }
+            evidence = .notLookedAt(alias: alias, unreadable: cannotRead, lead: lead, needed: needed)
+            matched = lead >= needed
+          }
+        } else {
+          evidence = .description(lead: lead, needed: needed)
+          matched = lead >= needed
+        }
+        let stays = step.action == .keep ? matched : !matched
+        if stays { kept.append(row) } else { dropped.append(row) }
+        verdicts[path, default: []].append(
+          FilterVerdict(step: step.id, matched: matched, kept: stays, evidence: evidence))
+      }
       stages.append(
         Stage(
-          remaining: kept.map { scores.paths[$0] },
-          dropped: current.filter { !keptSet.contains($0) }.map { scores.paths[$0] },
+          remaining: kept.map { scores.paths[$0] }, dropped: dropped.map { scores.paths[$0] },
           unchecked: unchecked.map { scores.paths[$0] }))
       current = kept
       column += 1
     }
     self.all = all
     self.stages = stages
+    self.verdicts = verdicts
   }
 }
 

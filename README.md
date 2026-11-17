@@ -10,17 +10,42 @@ A native macOS app for curating your images: browse any folder, find a picture b
 
 Requires an Apple Silicon Mac with macOS 14 or later.
 
-1. Download `Curio-<version>-arm64.dmg` from the [latest release](https://github.com/ElectricGoal/image-searching-macos/releases/latest).
-2. Open it and drag **Curio** to **Applications**.
-3. Open the app. It is not yet notarised by Apple, so the first time macOS will refuse: go to **System Settings › Privacy & Security**, scroll to the message about Curio, and choose **Open Anyway**. (Or run `xattr -dr com.apple.quarantine /Applications/Curio.app` once.)
+Download `Curio-<version>-arm64.dmg` from the [latest release](https://github.com/ElectricGoal/curio/releases/latest). Curio is not signed with an Apple Developer ID, so macOS cannot verify it, and how you install it depends on your macOS version.
+
+**macOS 27 and later.** Dragging Curio to Applications fails with "Could not install — This Mac could not verify the app, so nothing was installed." Install it from Terminal instead. This downloads the latest release and installs it:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ElectricGoal/curio/main/scripts/install.sh | bash
+```
+
+Or, with a disk image you already downloaded: `bash install.sh ~/Downloads/Curio-0.0.2-arm64.dmg` ([install.sh](scripts/install.sh)). Run it again to update; it replaces the app and keeps your settings, models and indexes. To uninstall, move `/Applications/Curio.app` to the Trash.
+
+<details><summary>By hand, without the script</summary>
+
+```bash
+hdiutil attach ~/Downloads/Curio-*-arm64.dmg
+ditto /Volumes/Curio*/Curio.app /Applications/Curio.app
+hdiutil detach /Volumes/Curio*
+xattr -dr com.apple.quarantine /Applications/Curio.app   # clears the "downloaded from the internet" mark
+open /Applications/Curio.app
+```
+
+</details>
+
+**macOS 14 to 26.** Open the disk image and drag **Curio** to **Applications**. The first time you open it, macOS refuses: go to **System Settings › Privacy & Security**, scroll to the message about Curio, and choose **Open Anyway**. (Or run `xattr -dr com.apple.quarantine /Applications/Curio.app` once.)
 
 The app itself is about 6 MB. On first launch Curio asks which search model to download — **MobileCLIP-S4** (recommended, about 890 MB) or the lighter **CLIP ViT-B/32** (about 300 MB) — from [huggingface.co/ElectricGoal/curio-models](https://huggingface.co/ElectricGoal/curio-models). Each file is checked against its checksum. You can browse right away and choose **Not Now** to download later; after that, Curio needs no network.
 
 ## Features
 
+### Albums
+
+- An **album** is a folder of photos. Add as many as you like with **+** beside Albums in the sidebar (⌘O), several at once, or by dropping folders on the window or the Dock icon. Subfolders are included.
+- Each album has four tabs: **Photos**, **Duplicates**, **Clean Up** and **Filter**. Switching albums keeps the tab you are on.
+- Right-click an album to show it in Finder or remove it from Curio; removing never touches the photos. An album on a drive that is not connected stays in the list, dimmed, until the drive is back.
+
 ### Browse
 
-- **Open a folder** with ⌘O, from the **Recent** list, or by dropping it on the window or the Dock icon. Subfolders are included.
 - Shows JPEG, PNG, HEIC, WebP, TIFF, BMP and GIF. Sort by name, date or size, and resize thumbnails from the toolbar.
 - Browsing needs no index and no model: it works straight away.
 
@@ -31,10 +56,10 @@ The app itself is about 6 MB. On first launch Curio asks which search model to d
 - **Combine an image with words**: after searching by example, type to steer the results — "at night", or "-people" to leave people out. Separate several with commas.
 - Searches take milliseconds once the model is loaded. Esc returns to the full library.
 
-### Tags and smart albums
+### Tags and saved searches
 
 - **Auto-tags**: Curio tags every indexed photo (beach, food, dogs, sunset, night…) on its own. The folder's most common tags appear under the search bar; click one to see only those photos. A photo's tags also show in the viewer.
-- **Smart albums**: save a search with **Save as Album**, or click **+** next to Albums in the sidebar and describe what to collect ("receipts", "my dog at the beach"). Albums fill themselves and stay current as new photos are indexed. Removing an album never touches the photos.
+- **Saved searches**: search for something ("receipts", "my dog at the beach") and choose **Save Search**. It appears as a bookmark chip before the tags, fills itself and stays current as new photos are indexed. Right-click the chip to remove it; that never touches the photos.
 
 ### Clean up clutter
 
@@ -47,7 +72,9 @@ The app itself is about 6 MB. On first launch Curio asks which search model to d
 - Every step shows how many images went in and how many it took out; click a step to preview what is left after it, or what it removed. **Strictness** (Loose, Balanced, Strict) sets how clearly an image must match.
 - Choose a folder, or make one with **New Folder…**, and **Copy** or **Move** the result there. Nothing is overwritten: a clashing name gets a number. The chain is remembered for next time.
 - Short, concrete descriptions work best. Image quality ("blurry", "artifacts") is the model's weakest area, so check those steps in the preview.
-- For a step that has to be right, tick **Look at each image**. A second model, [Liquid d1-2B](https://huggingface.co/LiquidAI/d1-2B) (run from Liquid AI's MLX builds, quantized to 8 or 4 bits; see [Models](#models)), then looks at every image reaching that step and answers it with yes or no, instead of the step being matched by description. On 83 mixed test images it kept every real "photo of people" where matching by description found 4 of 24, and it did not mistake logos and icons for "a product on a white background".
+- Every step has a permanent number (**#1**, **#2**…) that stays the same when steps are moved, and its own **model**: matching the description against the album's search index (instant), the default decision model chosen in Settings, or a specific decision model (Liquid d1-2B or its smaller 4-bit version).
+- **Trace a photo**: click any photo in the Filter preview to see its way through the chain — at each numbered step, whether it was kept, passed or removed, and why (how well it fitted the description, or how sure the model was, against what the step needs). The chain marks the same on each node, and the result says whether the photo made it.
+- For a step that has to be right, choose a model that **looks at each image**. A second model, [Liquid d1-2B](https://huggingface.co/LiquidAI/d1-2B) (run from Liquid AI's MLX builds, quantized to 8 or 4 bits; see [Models](#models)), then looks at every image reaching that step and answers it with yes or no, instead of the step being matched by description. On 83 mixed test images it kept every real "photo of people" where matching by description found 4 of 24, and it did not mistake logos and icons for "a product on a white background".
 - Looking is slow — about a third of a second per image on an M4, so a few minutes per thousand — and starts only when you press **Look Now**. You can pause at any time: each answer is kept with the folder, so an image is only ever looked at once per step.
 
 ### Index once, stay current

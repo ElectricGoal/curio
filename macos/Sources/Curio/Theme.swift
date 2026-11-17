@@ -47,9 +47,15 @@ enum Theme {
   static let gutter = Space.xl
   static let sidebarWidth: CGFloat = 216
   /// The strip at the top of the window where macOS draws its close, minimise and zoom buttons.
-  static let titleRow: CGFloat = 28
-  /// Room those three buttons take from the window's left edge.
+  static let titleRow: CGFloat = 38
+  /// Room macOS's window buttons take from the window's left edge, plus a gap.
   static let windowButtonsWidth: CGFloat = 78
+
+  // MARK: Corners (soft, as in Orca: cards and fields, then controls, then tags)
+
+  static let radius: CGFloat = 8
+  static let controlRadius: CGFloat = 6
+  static let tagRadius: CGFloat = 4
 
   // MARK: Line
 
@@ -75,9 +81,9 @@ enum Theme {
 
 extension Font {
   /// Page titles.
-  static let swissDisplay = Font.largeTitle.weight(.bold)
+  static let swissDisplay = Font.title2.weight(.semibold)
   /// Section and empty-state headings.
-  static let swissHeading = Font.title2.weight(.semibold)
+  static let swissHeading = Font.title3.weight(.semibold)
   /// Panel titles and row names.
   static let swissTitle = Font.headline
   static let swissBody = Font.body
@@ -105,8 +111,8 @@ struct Tag: View {
     Text(text.uppercased()).font(.swissLabel).tracking(0.8)
       .padding(.horizontal, 6).padding(.vertical, 3)
       .foregroundStyle(filled ? Theme.onInk : Theme.foreground)
-      .background(filled ? Theme.ink : Theme.surface)
-      .overlay(Rectangle().strokeBorder(Theme.ink, lineWidth: Theme.hairline))
+      .background(filled ? Theme.ink : Theme.surface, in: RoundedRectangle(cornerRadius: Theme.tagRadius))
+      .overlay(RoundedRectangle(cornerRadius: Theme.tagRadius).strokeBorder(Theme.ink, lineWidth: Theme.hairline))
   }
 }
 
@@ -123,10 +129,15 @@ extension View {
   /// A bordered panel. `emphasis` adds a rule down the leading edge.
   func panel(emphasis: Color? = nil, padding: CGFloat = Theme.Space.m) -> some View {
     self.padding(padding)
-      .background(Theme.surface)
-      .overlay(Rectangle().strokeBorder(Theme.border, lineWidth: Theme.hairline))
+      .background(Theme.surface, in: RoundedRectangle(cornerRadius: Theme.radius))
+      .overlay(
+        RoundedRectangle(cornerRadius: Theme.radius)
+          .strokeBorder(Theme.border, lineWidth: Theme.hairline))
       .overlay(alignment: .leading) {
-        if let emphasis { Rectangle().fill(emphasis).frame(width: Theme.rule) }
+        // A short bar inside the rounded edge marks emphasis without filling the card.
+        if let emphasis {
+          Capsule().fill(emphasis).frame(width: 3).padding(.vertical, Theme.Space.s).padding(.leading, 3)
+        }
       }
   }
 }
@@ -165,8 +176,8 @@ struct SwissButtonStyle: ButtonStyle {
         .padding(.horizontal, style.kind == .quiet ? Theme.Space.s : Theme.Space.m)
         .padding(.vertical, style.compact ? Theme.Space.xs : 6)
         .foregroundStyle(foreground)
-        .background(background)
-        .overlay(Rectangle().strokeBorder(outline, lineWidth: Theme.hairline))
+        .background(background, in: RoundedRectangle(cornerRadius: Theme.controlRadius))
+        .overlay(RoundedRectangle(cornerRadius: Theme.controlRadius).strokeBorder(outline, lineWidth: Theme.hairline))
         .contentShape(Rectangle())
         .opacity(isEnabled ? (configuration.isPressed ? 0.65 : 1) : 0.4)
         .onHover { hovering = $0 }
@@ -249,6 +260,8 @@ struct Chip: View {
   let title: String
   var count: Int?
   let selected: Bool
+  /// A small symbol before the title, such as the bookmark of a saved search.
+  var symbol: String? = nil
   let action: () -> Void
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
   @State private var hovering = false
@@ -256,6 +269,7 @@ struct Chip: View {
   var body: some View {
     Button(action: action) {
       HStack(spacing: Theme.Space.xs) {
+        if let symbol { Image(systemName: symbol).font(.caption).accessibilityHidden(true) }
         Text(title).fontWeight(selected ? .semibold : .regular)
         if let count {
           Text(Format.count(count)).monospacedDigit()
@@ -265,8 +279,8 @@ struct Chip: View {
       .font(.callout).lineLimit(1)
       .padding(.horizontal, Theme.Space.s + 2).frame(minHeight: 26)
       .foregroundStyle(selected ? Theme.onInk : Theme.foreground)
-      .background(selected ? Theme.ink : (hovering ? Theme.muted : Theme.surface))
-      .overlay(Rectangle().strokeBorder(selected ? Theme.ink : Theme.border, lineWidth: Theme.hairline))
+      .background(selected ? Theme.ink : (hovering ? Theme.muted : Theme.surface), in: Capsule())
+      .overlay(Capsule().strokeBorder(selected ? Theme.ink : Theme.border, lineWidth: Theme.hairline))
       .contentShape(Rectangle())
     }
     .buttonStyle(.plain)

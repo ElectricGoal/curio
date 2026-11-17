@@ -5,14 +5,17 @@ import SwiftUI
 /// Full-window viewer. Arrow keys page through photos; Esc or Space closes.
 struct PreviewView: View {
   private static let maxPixel = 3840
-  private static let zoomRange: ClosedRange<CGFloat> = 1...6
 
   @EnvironmentObject private var studio: Studio
   let state: PreviewState
   @State private var image: NSImage?
   @State private var originalSize: CGSize?
   @State private var failed = false
+  /// The current magnification, as the zoomable image reports it.
   @State private var zoom: CGFloat = 1
+  @State private var zoomRequest: ZoomRequest?
+  /// The viewer's own key handling while it is open (see `listenToKeys`).
+  @State private var keyMonitor: Any?
 
   private var photo: Photo { state.photo }
 
@@ -33,11 +36,11 @@ struct PreviewView: View {
     }
     .foregroundStyle(Theme.foreground)
     .background(Theme.background)
-    .background(shortcuts)
+    .onAppear(perform: listenToKeys)
+    .onDisappear(perform: stopListening)
     // Photographs are judged against black, whatever the system appearance.
     .environment(\.colorScheme, .dark)
     .task(id: photo.path) { await load() }
-    .transition(.opacity)
   }
 
   // MARK: - Chrome
@@ -51,11 +54,11 @@ struct PreviewView: View {
       }
       Spacer(minLength: Theme.Space.m)
       IconButton(symbol: "minus", label: "Zoom out") {
-        zoom = max(Self.zoomRange.lowerBound, zoom / 1.5)
-      }.disabled(zoom <= Self.zoomRange.lowerBound)
-      IconButton(symbol: "plus", label: "Zoom in (or double-click the image)") {
-        zoom = min(Self.zoomRange.upperBound, zoom * 1.5)
-      }.disabled(zoom >= Self.zoomRange.upperBound)
+        zoomRequest = ZoomRequest(magnification: max(ZoomableImage.range.lowerBound, zoom / 1.5))
+      }.disabled(zoom <= ZoomableImage.range.lowerBound + 0.01)
+      IconButton(symbol: "plus", label: "Zoom in (or double-click the image, or pinch)") {
+        zoomRequest = ZoomRequest(magnification: min(ZoomableImage.range.upperBound, zoom * 1.5))
+      }.disabled(zoom >= ZoomableImage.range.upperBound - 0.01)
       Button("Find Similar") { studio.searchSimilar(to: photo) }.buttonStyle(.swiss)
       Menu {
         PhotoMenu(photo: photo)
@@ -69,24 +72,22 @@ struct PreviewView: View {
   }
 
   private var canvas: some View {
-    GeometryReader { area in
-      ScrollView([.horizontal, .vertical]) {
-        Group {
-          if let image {
-            Image(nsImage: image).resizable().scaledToFit()
-              .onTapGesture(count: 2) { zoom = zoom > 1 ? 1 : 2.5 }
-              .draggable(photo.url)
-              .accessibilityLabel(photo.name)
-          } else if failed {
-            Text("This image could not be opened.").foregroundStyle(Theme.mutedForeground)
-          } else {
-            ProgressView().accessibilityLabel("Loading image")
-          }
+    Group {
+      if let image {
+        ZoomableImage(
+          image: image, fileURL: photo.url, identity: photo.path, request: zoomRequest
+        ) { magnification in
+          // Reported from AppKit, possibly mid-update: applied on the next turn.
+          DispatchQueue.main.async { zoom = magnification }
         }
-        .frame(width: area.size.width * zoom, height: area.size.height * zoom)
+        .accessibilityLabel(photo.name)
+      } else if failed {
+        Text("This image could not be opened.").foregroundStyle(Theme.mutedForeground)
+      } else {
+        ProgressView().accessibilityLabel("Loading image")
       }
-      .scrollIndicators(zoom > 1 ? .automatic : .hidden)
     }
+    .frame(maxWidth: .infinity, maxHeight: .infinity)
   }
 
   private var details: some View {
@@ -125,17 +126,35 @@ struct PreviewView: View {
     .accessibilityLabel(label).help(label)
   }
 
-  /// Invisible buttons that give the viewer its keyboard shortcuts.
-  private var shortcuts: some View {
-    Group {
-      Button("Previous") { move(-1) }.keyboardShortcut(.leftArrow, modifiers: [])
-      Button("Next") { move(1) }.keyboardShortcut(.rightArrow, modifiers: [])
-      Button("Close") { studio.preview = nil }.keyboardShortcut(.cancelAction)
-      Button("Close") { studio.preview = nil }.keyboardShortcut(.space, modifiers: [])
-    }.opacity(0).accessibilityHidden(true)
+  /// ← and → page, Space and Esc close, wherever keyboard focus is. Shortcuts
+  /// on hidden buttons lost these after the first move: the zoomable photo's
+  /// scroll view took focus and used the arrows to scroll. Keys typed into a
+  /// text field, or held with ⌘ ⌥ ⌃ ⇧, are left alone.
+  private func listenToKeys() {
+    guard keyMonitor == nil else { return }
+    let studio = studio
+    keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+      guard let current = studio.preview,
+        event.modifierFlags.intersection([.command, .option, .control, .shift]).isEmpty,
+        !(event.window?.firstResponder is NSText)
+      else { return event }
+      switch event.keyCode {
+      case 123, 124:  // ← →
+        let next = current.moved(by: event.keyCode == 123 ? -1 : 1)
+        if next != current { studio.preview = next }
+      case 49, 53:  // Space, Esc
+        studio.preview = nil
+      default:
+        return event
+      }
+      return nil
+    }
   }
 
-  // MARK: - Behaviour
+  private func stopListening() {
+    if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
+    keyMonitor = nil
+  }
 
   private func move(_ offset: Int) {
     let next = state.moved(by: offset)

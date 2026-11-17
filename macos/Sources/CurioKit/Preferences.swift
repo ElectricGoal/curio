@@ -11,11 +11,12 @@ public enum Appearance: String, Codable, CaseIterable, Identifiable, Sendable {
 /// Settings remembered between launches.
 public struct Preferences: Codable, Equatable, Sendable {
   public static let defaultModel = "mobileclip-s4"
-  public static let recentLimit = 8
   public static let thumbnailRange: ClosedRange<Double> = 110...320
 
   public var model: String
   public var folder: String?
+  /// The albums: folders the user added, in the order they were added. (Stored
+  /// under its first name, from when it held recently opened folders.)
   public var recentFolders: [String]
   public var thumbnailSize: Double
   public var sort: PhotoSort
@@ -64,16 +65,16 @@ public struct Preferences: Codable, Equatable, Sendable {
     decisionModel = storedDecision.flatMap { $0.isEmpty ? nil : $0 } ?? fallback.decisionModel
   }
 
-  /// A copy with `path` as the current folder and at the front of the recents.
+  /// A copy with `path` as the current folder, added to the albums if it is new.
+  /// Albums keep the order they were added in: opening one does not move it.
   public func opening(folder path: String) -> Preferences {
     var copy = self
     copy.folder = path
-    copy.recentFolders = Array(
-      ([path] + recentFolders.filter { $0 != path }).prefix(Preferences.recentLimit))
+    if !recentFolders.contains(path) { copy.recentFolders = recentFolders + [path] }
     return copy
   }
 
-  /// A copy with `path` dropped from the recents (and as the current folder).
+  /// A copy with `path` dropped from the albums (and as the current folder).
   public func forgetting(folder path: String) -> Preferences {
     var copy = self
     copy.recentFolders = recentFolders.filter { $0 != path }

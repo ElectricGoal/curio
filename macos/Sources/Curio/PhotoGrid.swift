@@ -46,8 +46,10 @@ struct PhotoCell: View {
     Button(action: open) {
       VStack(alignment: .leading, spacing: Theme.Space.s) {
         Thumbnail(path: photo.path).aspectRatio(1, contentMode: .fit)
+          .clipShape(RoundedRectangle(cornerRadius: Theme.controlRadius))
           .overlay(
-            Rectangle().strokeBorder(Theme.ink, lineWidth: Theme.rule).opacity(hovering ? 1 : 0))
+            RoundedRectangle(cornerRadius: Theme.controlRadius)
+              .strokeBorder(Theme.ink, lineWidth: Theme.rule).opacity(hovering ? 1 : 0))
         HStack(alignment: .firstTextBaseline, spacing: Theme.Space.s) {
           Text(photo.name).lineLimit(1).truncationMode(.middle)
             .foregroundStyle(hovering ? Theme.foreground : Theme.mutedForeground)

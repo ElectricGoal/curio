@@ -42,9 +42,24 @@ The same benchmark with Liquid's 8-bit MLX checkpoint (`d1-2b`) and the same wei
 
 At 8 bits re-quantizing costs almost nothing: every answer agrees with MLX. But the speed gap widens. MLX takes the same time at 8 bits as at 4 (0.186 s against 0.184 s); Core AI slows from 0.250 s to 0.293 s, as if it were limited by reading weights, where MLX is not. The memory saving shrinks to about half a gigabyte.
 
+## Is the Core AI implementation correct?
+
+Checked against the verification gates in Apple's Core AI skills (`coreai-skills`: working-with-coreai, model-authoring), on the same inputs the app builds:
+
+| Gate | 4-bit | 8-bit | Expected |
+|---|---|---|---|
+| Re-authored PyTorch (float16) vs source (MLX) | 71.3 dB, max diff 0.006 | 68.6 dB, max diff 0.008 | > 70 dB |
+| Compiled Core AI vs PyTorch, same quantized weights | 75.7 dB, max diff 0.003 | 66.0 dB, max diff 0.011 | ≥ 40 dB |
+
+The compiled model computes what the PyTorch model does; the 8-bit mirror's 68.6 dB is MLX's own float16 rounding (the largest gap is 0.008 on scores of 2–12), not a modelling error. Differences in answers against MLX come from re-quantizing, not from the export.
+
+**Compute unit.** Loaded with default options, Core AI first tries the Neural Engine, which cannot take block-quantized weights ("groups / block / batch quantization not supported on ANEC"), then runs on the GPU. Asking for the GPU explicitly (`SpecializationOptions(preferredComputeUnitKind: .gpu)`, now the loader's default) gives the same speed — 0.251 s against 0.253 s at 4 bits, 0.297 s against 0.293 s at 8 — so the results above stand.
+
+**Not done: Apple's composite ops.** Apple's macOS export path swaps RMSNorm, rotary positions and attention for Core AI composite ops (`coreai_torch.composite_ops` RMSNorm, RoPE, SDPA with a sliding `window_size`) and externalizes them. This export writes them as plain PyTorch ops, with sliding attention as a full mask: correct, but more operations per layer, and a likely part of the speed gap. That is the first thing to try before concluding Core AI is slower.
+
 ## Verdict
 
-Not worth switching yet. MLX answers 1.36× faster at 4 bits and 1.57× faster at 8 bits, handles any picture shape and up to 16 questions per pass, and runs on macOS 14. Core AI saves about 0.7 GB of GPU memory, which matters on 8 GB Macs, but needs macOS 27, a fixed picture grid and row length per exported graph (or one graph per shape), and loses a little accuracy through re-quantization. Worth revisiting: export from the bfloat16 checkpoint, apply Apple's GPU authoring patterns, and export a few picture shapes as separate functions.
+Not worth switching yet. MLX answers 1.36× faster at 4 bits and 1.57× faster at 8 bits, handles any picture shape and up to 16 questions per pass, and runs on macOS 14. Core AI saves about 0.7 GB of GPU memory, which matters on 8 GB Macs, but needs macOS 27, a fixed picture grid and row length per exported graph (or one graph per shape), and loses a little accuracy through re-quantization. Worth revisiting: use Core AI's composite ops (RMSNorm, RoPE, windowed SDPA) as Apple's export path does, export from the bfloat16 checkpoint, apply Apple's other GPU authoring patterns (fused QKV), and export a few picture shapes as separate functions.
 
 ## How it was built
 

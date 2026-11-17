@@ -59,7 +59,11 @@ extension D1CoreAITests {
         guard #available(macOS 27.0, *) else { throw XCTSkip("Core AI needs macOS 27") }
         let asset = try required("CURIO_D1_AIMODEL", "set CURIO_D1_AIMODEL to the exported .aimodel")
         if environment["CURIO_D1_COLD"] == "1" { try AIModelCache.default.deleteEntries(for: asset) }
-        model = try await CoreAIDecisionModel.load(alias: alias, asset: asset, checkpoint: checkpoint)
+        // CURIO_D1_COMPUTE=default lets Core AI choose; anything else asks for the GPU.
+        let options: SpecializationOptions =
+          environment["CURIO_D1_COMPUTE"] == "default" ? .default : SpecializationOptions(preferredComputeUnitKind: .gpu)
+        model = try await CoreAIDecisionModel.load(
+          alias: alias, asset: asset, checkpoint: checkpoint, options: options)
       #else
         throw XCTSkip("Core AI needs the macOS 27 SDK")
       #endif
@@ -89,6 +93,7 @@ extension D1CoreAITests {
     }
     let result: [String: Any] = [
       "backend": backend, "alias": alias, "images": images.count, "cold": environment["CURIO_D1_COLD"] == "1",
+      "compute": backend == "coreai" ? (environment["CURIO_D1_COMPUTE"] ?? "gpu") : "gpu",
       "loadSeconds": load, "firstSeconds": firstSeconds,
       "meanSeconds": seconds.reduce(0, +) / Double(seconds.count), "medianSeconds": sorted[sorted.count / 2],
       "minSeconds": sorted.first!, "maxSeconds": sorted.last!,

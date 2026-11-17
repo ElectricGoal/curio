@@ -42,10 +42,13 @@
 
     /// Loads `asset` (an exported .aimodel, with `geometry.json` beside it); the
     /// tokenizer, settings and calibration come from the MLX checkpoint in `checkpoint`.
-    public static func load(alias: String, asset: URL, checkpoint: URL, longestSide: Int = 384)
-      async throws -> CoreAIDecisionModel
-    {
-      let model = try await AIModel(contentsOf: asset)
+    /// `options` decide which compute unit Core AI compiles for: by default it tries
+    /// the Neural Engine first, which cannot run this model's block-quantized weights.
+    public static func load(
+      alias: String, asset: URL, checkpoint: URL, longestSide: Int = 384,
+      options: SpecializationOptions = SpecializationOptions(preferredComputeUnitKind: .gpu)
+    ) async throws -> CoreAIDecisionModel {
+      let model = try await AIModel(contentsOf: asset, options: options)
       guard let function = try model.loadFunction(named: "main") else {
         throw EngineError.failed("The Core AI model has no main function.")
       }

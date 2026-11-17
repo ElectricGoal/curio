@@ -158,4 +158,73 @@ final class FilterTests: XCTestCase {
       FilterStep(action: .keep, text: "  screenshots ").question,
       "Does this image match the description “screenshots”?")
   }
+
+  func testTheTraceSaysWhatEachStepDecidedAndWhy() {
+    // #1 keeps "portrait" by description; #2 removes "blurry" by the model.
+    let first = FilterStep(number: 1, action: .keep, text: "portrait")
+    let second = FilterStep(number: 2, action: .remove, text: "blurry", model: "d1-2b")
+    let rows: [String: [Float]] = [
+      "/sharp.jpg": [0.20, 0.25, 0.10], "/soft.jpg": [0.20, 0.25, 0.10], "/view.jpg": [0.20, 0.18, 0.10],
+    ]
+    let decisions = DecisionScores(
+      model: "d1-2b", questions: [second.question], answers: ["/sharp.jpg": [0.1], "/soft.jpg": [0.9]])
+    let run = FilterRun(steps: [first, second], scores: scores(rows, prompts: 3), answers: ["d1-2b": decisions])
+
+    let soft = run.trace(of: "/soft.jpg")
+    XCTAssertEqual(soft.map(\.step), [first.id, second.id])
+    XCTAssertEqual(soft.map(\.kept), [true, false], "kept by #1, removed by #2")
+    guard case .description(let lead, let needed) = soft[0].evidence else { return XCTFail("#1 goes by description") }
+    XCTAssertEqual(lead, 0.05, accuracy: 0.0001)
+    XCTAssertEqual(needed, 0.02, accuracy: 0.0001)
+    XCTAssertEqual(soft[1].evidence, .model(alias: "d1-2b", yes: 0.9, needed: 0.5))
+
+    let view = run.trace(of: "/view.jpg")
+    XCTAssertEqual(view.count, 1, "removed by #1, so #2 never saw it")
+    XCTAssertFalse(view[0].kept)
+    XCTAssertEqual(run.trace(of: "/sharp.jpg").map(\.kept), [true, true])
+    XCTAssertEqual(run.result, ["/sharp.jpg"])
+  }
+
+  func testEachModelStepReadsOnlyItsOwnModelsAnswers() {
+    let big = FilterStep(action: .keep, text: "portrait", model: "d1-2b")
+    let small = FilterStep(action: .keep, text: "portrait", model: "d1-2b-4bit")
+    let rows: [String: [Float]] = ["/a.jpg": [0.20, 0.20, 0.20]]
+    let answers = [
+      "d1-2b": DecisionScores(model: "d1-2b", questions: [big.question], answers: ["/a.jpg": [0.9]]),
+      "d1-2b-4bit": DecisionScores(model: "d1-2b-4bit", questions: [small.question], answers: ["/a.jpg": [0.1]]),
+    ]
+    let run = FilterRun(steps: [big, small], scores: scores(rows, prompts: 3), answers: answers)
+    XCTAssertEqual(run.trace(of: "/a.jpg").map(\.kept), [true, false])
+    XCTAssertEqual(run.trace(of: "/a.jpg")[1].evidence, .model(alias: "d1-2b-4bit", yes: 0.1, needed: 0.5))
+  }
+
+  func testImagesAModelHasNotSeenAreTracedAsJudgedByDescription() {
+    let step = FilterStep(action: .keep, text: "portrait", model: "d1-2b")
+    let run = FilterRun(steps: [step], scores: scores(["/a.jpg": [0.20, 0.25]], prompts: 2))
+    guard case .notLookedAt(let alias, let unreadable, _, _) = run.trace(of: "/a.jpg")[0].evidence else {
+      return XCTFail("not looked at yet")
+    }
+    XCTAssertEqual(alias, "d1-2b")
+    XCTAssertFalse(unreadable)
+  }
+
+  func testStepNumbersAreGivenOnceAndKeptThroughSaving() throws {
+    let numbered = FilterStep.numbered([
+      FilterStep(number: 4, action: .keep, text: "a"), FilterStep(action: .keep, text: "b"),
+      FilterStep(action: .remove, text: "c"),
+    ])
+    XCTAssertEqual(numbered.map(\.number), [4, 5, 6], "new numbers follow the highest, in chain order")
+    let saved = try JSONDecoder().decode(FilterStep.self, from: JSONEncoder().encode(numbered[1]))
+    XCTAssertEqual(saved, numbered[1])
+  }
+
+  func testAStepSavedAsCarefulUsesTheDefaultModel() throws {
+    let json = #"{"id":"11111111-1111-1111-1111-111111111111","action":"keep","text":"x","strictness":"balanced","careful":true}"#
+    let step = try JSONDecoder().decode(FilterStep.self, from: Data(json.utf8))
+    XCTAssertEqual(step.model, FilterStep.defaultModel, "it follows the model chosen in Settings")
+    XCTAssertEqual(step.number, 0, "numbered when the app loads the chain")
+    var plain = step
+    plain.careful = false
+    XCTAssertNil(plain.model)
+  }
 }

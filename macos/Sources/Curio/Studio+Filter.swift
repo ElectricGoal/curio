@@ -23,7 +23,8 @@ extension Studio {
   // MARK: - Editing the chain
 
   func addStep(_ action: FilterStep.Action, text: String = "") {
-    let step = FilterStep(action: action, text: text)
+    // New steps match by description; the model menu on the step changes that.
+    let step = FilterStep(number: (filterSteps.map(\.number).max() ?? 0) + 1, action: action, text: text)
     filterSteps.append(step)
     filterFocus = step.id
     stepsChanged()
@@ -79,13 +80,13 @@ extension Studio {
       updateFilterPreview()
       return
     }
-    let steps = filterSteps
+    // "Default" steps run with the model chosen in Settings, by its real name.
+    let steps = filterSteps.map(resolved)
     let prompts = [FilterRun.baseline] + steps.filter(\.isActive).map(\.prompt)
-    let questions = Studio.questions(for: steps)
+    // Each model step reads its own model's answers.
+    let questionsByModel = Studio.questions(for: steps)
     let present = Set(library.map(\.path))
     let engine = engine
-    // The same model "Look Now" would ask, so the chain reads that model's answers.
-    let decider = decisionModel?.alias ?? selectedDecisionModel
     isFiltering = true
     filterProblem = nil
     filterTask = Task {
@@ -94,21 +95,21 @@ extension Studio {
       defer { if generation == filterGeneration { isFiltering = false } }
       do {
         let scores = try await engine.scores(folder: folder, prompts: prompts)
-        // What the decision model has already said; nothing is asked of it here.
-        var decisions: DecisionScores?
-        if !questions.isEmpty {
+        // What each model has already said; nothing is asked of any here.
+        var answers: [String: DecisionScores] = [:]
+        for (model, questions) in questionsByModel {
           do {
-            decisions = try await engine.decisions(
-              folder: folder, model: decider, paths: scores.paths.filter(present.contains),
+            answers[model] = try await engine.decisions(
+              folder: folder, model: model, paths: scores.paths.filter(present.contains),
               questions: questions, asking: false, onProgress: { _ in })
           } catch {
             // The chain still runs by description; say why the saved answers are not in it.
             if generation == filterGeneration { status = EngineDiagnosis.message(for: error) }
           }
         }
-        let answered = decisions
+        let answered = answers
         let run = await Task.detached {
-          FilterRun(steps: steps, scores: scores, decisions: answered, among: present)
+          FilterRun(steps: steps, scores: scores, answers: answered, among: present)
         }.value
         guard generation == filterGeneration else { return }
         filterRun = run
@@ -128,9 +129,41 @@ extension Studio {
       ?? decisionModels.first { $0.isDefault } ?? decisionModels.first
   }
 
-  private static func questions(for steps: [FilterStep]) -> [String] {
-    var seen: Set<String> = []
-    return steps.filter { $0.isActive && $0.careful }.map(\.question).filter { seen.insert($0).inserted }
+  /// Each decision model the chain uses, with the questions its steps ask it.
+  private static func questions(for steps: [FilterStep]) -> [String: [String]] {
+    var questions: [String: [String]] = [:]
+    for step in steps where step.isActive {
+      guard let model = step.model, !(questions[model] ?? []).contains(step.question) else { continue }
+      questions[model, default: []].append(step.question)
+    }
+    return questions
+  }
+
+  /// The decision model a step really uses: its own, or for a step following
+  /// the default, the one chosen in Settings (or the one installed).
+  func decisionAlias(for step: FilterStep) -> String? {
+    guard let model = step.model else { return nil }
+    guard model == FilterStep.defaultModel else { return model }
+    return decisionModel?.alias ?? selectedDecisionModel
+  }
+
+  /// The step as the chain runs it, with its model named.
+  func resolved(_ step: FilterStep) -> FilterStep {
+    var step = step
+    if step.careful { step.model = decisionAlias(for: step) }
+    return step
+  }
+
+  func decisionName(_ alias: String) -> String {
+    decisionModels.first { $0.alias == alias }?.name ?? DecisionCatalog.entry(alias)?.name ?? alias
+  }
+
+  /// What the step's model menu shows.
+  func modelName(for step: FilterStep) -> String {
+    guard let alias = decisionAlias(for: step) else {
+      return "Description · \(indexStatus?.modelName ?? "search index")"
+    }
+    return step.model == FilterStep.defaultModel ? "Default · \(decisionName(alias))" : decisionName(alias)
   }
 
   /// Images the step at `index` judged by description because the decision
@@ -149,14 +182,15 @@ extension Studio {
     else { return }
     let paths = run.stages[index].unchecked
     let question = filterSteps[index].question
+    let alias = decisionAlias(for: filterSteps[index]) ?? DecisionCatalog.defaultAlias
     guard !paths.isEmpty else { return }
     let engine = engine
     Task {
       if decisionModels.isEmpty { await loadModels() }
-      guard let model = decisionModel, model.installed else {
+      guard let model = decisionModels.first(where: { $0.alias == alias }), model.installed else {
         alert = AlertMessage(
           title: "A model is needed first",
-          message: "Careful steps use \(decisionModel?.name ?? "a decision model"). Download it in Settings.")
+          message: "This step uses \(decisionName(alias)). Download it from the step, or in Settings.")
         return
       }
       let answered = await perform(.deciding) { progress in
@@ -279,5 +313,20 @@ extension Studio {
       }
       if !outcome.done.isEmpty { NSWorkspace.shared.activateFileViewerSelecting([destination]) }
     }
+  }
+}
+
+// MARK: - Trace
+
+extension Studio {
+  /// Shows a photo's way through the chain; choosing it again hides it.
+  func traceFilter(_ photo: Photo) {
+    filterTraced = filterTraced == photo.path ? nil : photo.path
+  }
+
+  /// The traced photo's verdicts, by step, for the chain's markers.
+  var filterTrace: [UUID: FilterVerdict] {
+    guard let path = filterTraced, let run = filterRun else { return [:] }
+    return Dictionary(run.trace(of: path).map { ($0.step, $0) }, uniquingKeysWith: { first, _ in first })
   }
 }

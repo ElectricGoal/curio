@@ -10,12 +10,12 @@ enum Page: String, CaseIterable, Identifiable {
 
   var id: String { rawValue }
 
-  /// The pages listed in the sidebar. Settings is reached from the footer.
-  static let sidebar: [Page] = [.library, .duplicates, .cleanup, .filter]
+  /// The tabs inside an album. Settings is reached from the footer.
+  static let tabs: [Page] = [.library, .duplicates, .cleanup, .filter]
 
   var title: String {
     switch self {
-    case .library: return "Library"
+    case .library: return "Photos"
     case .duplicates: return "Duplicates"
     case .cleanup: return "Clean Up"
     case .filter: return "Filter"
@@ -34,7 +34,7 @@ struct SearchResults: Equatable {
   /// The tag or album shown, when the results are one.
   var label: CurationLabel? = nil
 
-  /// Searches rank the whole folder; tags and albums are just their members.
+  /// Searches rank the whole folder; tags and savedSearches are just their members.
   var isRanked: Bool { kind == .text || kind == .image }
 
   /// Image-to-image scores read naturally as "how alike"; text-to-image
@@ -95,7 +95,11 @@ final class Studio: ObservableObject {
   @Published var library: [Photo] = []
   @Published private(set) var isScanning = false
   @Published private(set) var scanCount = 0
-  @Published private(set) var recentFolders: [URL] = []
+  /// The albums: folders the user added, in the order they were added. Ones on
+  /// a disconnected drive stay listed, so they come back when it does.
+  @Published private(set) var albumFolders: [URL] = []
+  /// Images in each album when it was last read, by path, for the sidebar.
+  @Published var albumCounts: [String: Int] = [:]
   @Published var sort: PhotoSort {
     didSet {
       guard sort != oldValue else { return }
@@ -136,13 +140,13 @@ final class Studio: ObservableObject {
   @Published var duplicates: DuplicateReport?
   @Published var duplicateMode: DuplicateMode = .nearIdentical
 
-  // Tags, albums and Clean Up
+  // Tags, savedSearches and Clean Up
   @Published var curation: Curation? { didSet { junkGroups = Studio.junkGroups(curation, in: library) } }
   /// Clutter groups found in the open folder, largest first. Kept, not computed:
   /// the sidebar reads it on every redraw.
   @Published private(set) var junkGroups: [(label: CurationLabel, photos: [Photo])] = []
   @Published var isCurating = false
-  @Published var albums: [String]
+  @Published var savedSearches: [String]
   /// Clutter the user has marked for the Trash.
   @Published var junkSelection: Set<String> = []
   var curationGeneration = 0
@@ -158,6 +162,8 @@ final class Studio: ObservableObject {
   /// The step whose output is previewed; nil for the final result.
   @Published var filterFocus: UUID?
   @Published var filterShowsRemoved = false
+  /// The photo whose way through the chain is shown, by path.
+  @Published var filterTraced: String?
   /// The photos the preview shows, kept so the grid is not rebuilt on every redraw.
   @Published var filterPreview: [Photo] = []
   @Published var exportFolder: URL?
@@ -222,9 +228,9 @@ final class Studio: ObservableObject {
     sort = preferences.sort
     thumbnailSize = preferences.thumbnailSize
     appearance = preferences.appearance
-    recentFolders = Studio.existingFolders(preferences.recentFolders)
-    albums = preferences.albums
-    filterSteps = preferences.filterSteps
+    albumFolders = Studio.albums(preferences.recentFolders)
+    savedSearches = preferences.albums
+    filterSteps = FilterStep.numbered(preferences.filterSteps)
   }
 
   // MARK: - Derived state
@@ -283,22 +289,63 @@ final class Studio: ObservableObject {
 
   // MARK: - Folders
 
+  /// Adds one or more folders as albums and opens the first of them.
   func chooseFolder() {
     let panel = NSOpenPanel()
     panel.canChooseDirectories = true
     panel.canChooseFiles = false
-    panel.prompt = "Open"
-    panel.message = "Choose a folder of images to browse and search."
-    if panel.runModal() == .OK, let url = panel.url { open(url) }
+    panel.allowsMultipleSelection = true
+    panel.prompt = "Add"
+    panel.message = "Choose folders of images to add as albums. Select several to add them at once."
+    guard panel.runModal() == .OK, let first = panel.urls.first else { return }
+    for url in panel.urls.dropFirst() {
+      updatePreferences { $0.recentFolders = $0.opening(folder: url.standardizedFileURL.path).recentFolders }
+    }
+    albumFolders = Studio.albums(preferences.recentFolders)
+    open(first)
+  }
+
+  /// Takes an album off the list. The folder and its photos are not touched.
+  func removeAlbumFolder(_ url: URL) {
+    let wasOpen = url == folder
+    forget(url)
+    guard wasOpen, !isFolderBusy else { return }
+    if let next = albumFolders.first(where: Studio.isDirectory) {
+      open(next)
+    } else {
+      closeFolder()
+    }
+  }
+
+  /// Shows no album: what the window looks like before any is added.
+  private func closeFolder() {
+    scanWorker?.cancel()
+    folderGeneration += 1
+    folder = nil
+    library = []
+    isScanning = false
+    results = nil
+    query = ""
+    reference = nil
+    indexStatus = nil
+    duplicates = nil
+    curation = nil
+    filterRun = nil
+    filterPreview = []
+    preview = nil
+    if page != .settings { page = .library }
+    updatePreferences { $0.folder = nil }
   }
 
   func open(_ url: URL) {
     let url = url.standardizedFileURL
     guard Studio.isDirectory(url) else {
-      forget(url)
+      // Kept in the list: a drive that is unplugged now may be back later.
       alert = AlertMessage(
-        title: "Folder not found",
-        message: "“\(url.lastPathComponent)” has been moved or deleted, or its drive is not connected.")
+        title: "Album not found",
+        message:
+          "“\(url.lastPathComponent)” has been moved or deleted, or its drive is not connected. Reconnect the drive, or remove the album from the sidebar."
+      )
       return
     }
     guard !isFolderBusy else {
@@ -310,8 +357,9 @@ final class Studio: ObservableObject {
     pendingSearch = nil
     folder = url
     updatePreferences { $0 = $0.opening(folder: url.path) }
-    recentFolders = Studio.existingFolders(preferences.recentFolders)
-    page = .library
+    albumFolders = Studio.albums(preferences.recentFolders)
+    // Switching albums keeps the tab: Duplicates in one album, then in the next.
+    if page == .settings { page = .library }
     query = ""
     results = nil
     isSearching = false
@@ -325,6 +373,7 @@ final class Studio: ObservableObject {
     albumToOpen = nil
     filterRun = nil
     filterPreview = []
+    filterTraced = nil
     filterProblem = nil
     isFiltering = false
     filterTask?.cancel()
@@ -338,8 +387,13 @@ final class Studio: ObservableObject {
   }
 
   func forget(_ url: URL) {
-    updatePreferences { $0 = $0.forgetting(folder: url.path) }
-    recentFolders = Studio.existingFolders(preferences.recentFolders)
+    // Every stored spelling of this folder goes, or another would bring it back.
+    let target = url.standardizedFileURL.path
+    for path in preferences.recentFolders
+    where URL(fileURLWithPath: path).standardizedFileURL.path == target {
+      updatePreferences { $0 = $0.forgetting(folder: path) }
+    }
+    albumFolders = Studio.albums(preferences.recentFolders)
   }
 
   /// Re-reads the folder from disk and refreshes what is known about its index.
@@ -366,6 +420,7 @@ final class Studio: ObservableObject {
       guard let photos = await worker.value, generation == folderGeneration else { return }
       // The sort order may have changed while scanning.
       library = self.sort == sort ? photos : self.sort.sorted(photos)
+      albumCounts[folder.path] = photos.count
       isScanning = false
       status = library.isEmpty ? "No images in this folder" : Format.images(library.count)
       refreshIndexStatus(preparingSearch: true)
@@ -393,8 +448,13 @@ final class Studio: ObservableObject {
   /// Folders drop in to open; images drop in to search by example.
   func handleDrop(_ urls: [URL]) -> Bool {
     let urls = urls.filter(\.isFileURL)  // a dragged web link is not a local image
-    if let directory = urls.first(where: Studio.isDirectory) {
-      open(directory)
+    let directories = urls.filter(Studio.isDirectory)
+    if let first = directories.first {
+      // Every dropped folder becomes an album; the first one opens.
+      for url in directories.dropFirst() {
+        updatePreferences { $0.recentFolders = $0.opening(folder: url.standardizedFileURL.path).recentFolders }
+      }
+      open(first)
       return true
     }
     if let image = urls.first(where: LibraryScanner.isImage), folder != nil {
@@ -473,13 +533,18 @@ final class Studio: ObservableObject {
 
   // MARK: - Helpers
 
+  /// Album paths in one spelling (/private/tmp and /tmp are the same folder),
+  /// each once, in the order they were added.
+  static func albums(_ paths: [String]) -> [URL] {
+    var seen: Set<String> = []
+    return paths.map { URL(fileURLWithPath: $0).standardizedFileURL }
+      .filter { seen.insert($0.path).inserted }
+  }
+
   static func isDirectory(_ url: URL) -> Bool {
     var isDirectory: ObjCBool = false
     return FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory)
       && isDirectory.boolValue
   }
 
-  private static func existingFolders(_ paths: [String]) -> [URL] {
-    paths.map { URL(fileURLWithPath: $0) }.filter(isDirectory)
-  }
 }

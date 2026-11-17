@@ -80,12 +80,12 @@ struct CurioApp: App {
         Button("Settings…") { studio.page = .settings }.keyboardShortcut(",")
       }
       CommandGroup(replacing: .newItem) {
-        Button("Open Folder…") { studio.chooseFolder() }.keyboardShortcut("o")
-        Menu("Open Recent") {
-          ForEach(studio.recentFolders, id: \.self) { url in
+        Button("Add Album…") { studio.chooseFolder() }.keyboardShortcut("o")
+        Menu("Open Album") {
+          ForEach(studio.albumFolders, id: \.self) { url in
             Button(url.lastPathComponent) { studio.open(url) }
           }
-        }.disabled(studio.recentFolders.isEmpty)
+        }.disabled(studio.albumFolders.isEmpty)
         Divider()
         Button("Show Folder in Finder") { studio.revealFolder() }
           .keyboardShortcut("r", modifiers: [.command, .shift]).disabled(studio.folder == nil)
@@ -94,7 +94,7 @@ struct CurioApp: App {
         Button("Find…") { studio.focusSearch() }.keyboardShortcut("f")
           .disabled(studio.folder == nil)
       }
-      CommandMenu("Library") {
+      CommandMenu("Album") {
         Button("Show All Photos") {
           studio.page = .library
           studio.clearSearch()

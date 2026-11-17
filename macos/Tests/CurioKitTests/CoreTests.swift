@@ -53,14 +53,14 @@ final class PreferencesTests: XCTestCase {
     XCTAssertEqual(store.load(), saved)
   }
 
-  func testRecentsAreDeduplicatedNewestFirstAndCapped() {
+  func testAlbumsKeepTheOrderTheyWereAddedInWithoutALimit() {
     var preferences = Preferences()
     for index in 0..<12 { preferences = preferences.opening(folder: "/photos/\(index)") }
     preferences = preferences.opening(folder: "/photos/9")
 
     XCTAssertEqual(preferences.folder, "/photos/9")
-    XCTAssertEqual(preferences.recentFolders.count, Preferences.recentLimit)
-    XCTAssertEqual(Array(preferences.recentFolders.prefix(3)), ["/photos/9", "/photos/11", "/photos/10"])
+    XCTAssertEqual(preferences.recentFolders.count, 12, "every album is kept, once")
+    XCTAssertEqual(Array(preferences.recentFolders.prefix(2)), ["/photos/0", "/photos/1"])
 
     let forgotten = preferences.forgetting(folder: "/photos/9")
     XCTAssertNil(forgotten.folder)

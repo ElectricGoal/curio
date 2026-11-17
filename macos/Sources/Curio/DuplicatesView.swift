@@ -104,19 +104,24 @@ struct SegmentedChoice<Option: Hashable & Identifiable>: View {
   let label: String
 
   var body: some View {
-    HStack(spacing: 0) {
+    // A pill track with the chosen option raised on it, as in Orca's "Names | Contents".
+    HStack(spacing: 2) {
       ForEach(options) { option in
         let chosen = option == selection
         Button(option[keyPath: title]) { selection = option }
           .buttonStyle(.plain).font(.callout.weight(chosen ? .semibold : .regular))
-          .padding(.horizontal, Theme.Space.m).padding(.vertical, 6)
-          .foregroundStyle(chosen ? Theme.onInk : Theme.foreground)
-          .background(chosen ? Theme.ink : Theme.surface)
-          .overlay(Rectangle().strokeBorder(Theme.ink, lineWidth: Theme.hairline))
+          .padding(.horizontal, Theme.Space.m).padding(.vertical, 4)
+          .foregroundStyle(chosen ? Theme.foreground : Theme.mutedForeground)
+          .background(chosen ? Theme.background : .clear, in: RoundedRectangle(cornerRadius: Theme.controlRadius - 1))
+          .overlay(
+            RoundedRectangle(cornerRadius: Theme.controlRadius - 1)
+              .strokeBorder(chosen ? Theme.border : .clear, lineWidth: Theme.hairline))
           .contentShape(Rectangle())
           .accessibilityAddTraits(chosen ? .isSelected : [])
       }
     }
+    .padding(2)
+    .background(Theme.muted, in: RoundedRectangle(cornerRadius: Theme.controlRadius + 1))
     .fixedSize()
     .accessibilityElement(children: .contain).accessibilityLabel(label)
   }

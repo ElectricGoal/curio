@@ -68,7 +68,11 @@ public final class CoreMLEmbeddingModel: EmbeddingModel, @unchecked Sendable {
     let modified: (URL) -> Date? = {
       (try? manager.attributesOfItem(atPath: $0.path))?[.modificationDate] as? Date
     }
-    if let built = modified(destination), let source = modified(package), built >= source {
+    // Compared as numbers: the macOS 27.2 SDK links `Date >=` to a Foundation
+    // symbol that shipping macOS 27.2 does not export, which crashed here.
+    if let built = modified(destination), let source = modified(package),
+      built.timeIntervalSinceReferenceDate >= source.timeIntervalSinceReferenceDate
+    {
       return destination
     }
     let temporary = try await MLModel.compileModel(at: package)

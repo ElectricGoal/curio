@@ -124,10 +124,10 @@ struct LibraryView: View {
       ).disabled(studio.activity != nil)
     }
     .padding(.horizontal, Theme.Space.m).padding(.vertical, Theme.Space.s)
-    .background(Theme.surface)
+    .background(Theme.surface, in: RoundedRectangle(cornerRadius: Theme.radius))
     // Drawn inside the frame, so focus thickens the edge without moving anything.
     .overlay(
-      Rectangle().strokeBorder(
+      RoundedRectangle(cornerRadius: Theme.radius).strokeBorder(
         searchFocused ? Theme.ink : Theme.mutedForeground,
         lineWidth: searchFocused ? Theme.rule : Theme.hairline))
   }
@@ -135,12 +135,13 @@ struct LibraryView: View {
   /// The image a search by example started from; typing then refines it.
   private func referenceChip(_ reference: ReferenceImage) -> some View {
     HStack(spacing: Theme.Space.xs) {
-      Thumbnail(path: reference.path).frame(width: 22, height: 22).clipped()
+      Thumbnail(path: reference.path).frame(width: 22, height: 22)
+        .clipShape(RoundedRectangle(cornerRadius: Theme.tagRadius))
       Text(reference.name).font(.callout).lineLimit(1).truncationMode(.middle)
         .frame(maxWidth: 160, alignment: .leading)
     }
     .padding(.trailing, Theme.Space.s)
-    .overlay(Rectangle().strokeBorder(Theme.border, lineWidth: Theme.hairline))
+    .overlay(RoundedRectangle(cornerRadius: Theme.tagRadius).strokeBorder(Theme.border, lineWidth: Theme.hairline))
     .help("Searching by this image. Type words to steer the results.")
     .accessibilityElement(children: .combine)
     .accessibilityLabel("Searching by example: \(reference.name)")
@@ -160,11 +161,23 @@ struct LibraryView: View {
 
   private static let visibleTags = 10
 
-  /// The folder's most common tags; choosing one shows only its photos.
+  /// Saved searches first, then the folder's most common tags; choosing one
+  /// shows only its photos, choosing it again shows them all.
   @ViewBuilder private var tagRow: some View {
     let tags = studio.folderTags
-    if !tags.isEmpty {
+    if !tags.isEmpty || !studio.savedSearches.isEmpty {
       FlowLayout {
+        ForEach(studio.savedSearches, id: \.self) { name in
+          let label = Labels.album(name)
+          Chip(
+            title: name, count: studio.curation.map { $0.count(for: label) },
+            selected: studio.results?.label == label, symbol: "bookmark"
+          ) {
+            studio.showSavedSearch(name)
+          }
+          .contextMenu { Button("Remove Saved Search") { studio.removeSavedSearch(name) } }
+          .help("A saved search: it updates itself as you add photos. Right-click to remove it.")
+        }
         ForEach(tags.prefix(Self.visibleTags), id: \.label) { tag in
           Chip(title: tag.label.name, count: tag.count, selected: studio.results?.label == tag.label) {
             studio.show(tag.label)
@@ -201,9 +214,9 @@ struct LibraryView: View {
         Button("Show All") { studio.clearSearch() }
           .buttonStyle(SwissButtonStyle(kind: .secondary, compact: true))
         if results.kind == .text {
-          Button("Save as Album") { studio.saveSearchAsAlbum() }
+          Button("Save Search") { studio.saveSearch() }
             .buttonStyle(SwissButtonStyle(kind: .quiet, compact: true))
-            .help("Keep this search in the sidebar. It updates itself as you add photos.")
+            .help("Keep this search as a chip above. It updates itself as you add photos.")
         }
       } else {
         Eyebrow(text: "Collection")
@@ -235,8 +248,6 @@ struct LibraryView: View {
         Button("Reload Folder") { studio.reloadLibrary() }
         Button("Show Folder in Finder") { studio.revealFolder() }
         Divider()
-        Button("Find Duplicates…") { studio.page = .duplicates }
-        Button("Clean Up…") { studio.page = .cleanup }
         Button("Rebuild Index with \(studio.selectedModelName)…") { confirmingRebuild = true }
           .disabled(studio.activity != nil)
       } label: {
@@ -289,12 +300,13 @@ struct LibraryView: View {
 
   private var welcome: some View {
     VStack(alignment: .leading, spacing: Theme.Space.m) {
-      Text("Open a folder\nof images.").font(.system(size: 44, weight: .bold))
-        .lineSpacing(-4).fixedSize(horizontal: false, vertical: true)
-      Text("Browse it, then search it by description or by example. Drop a folder anywhere in this window to begin. Nothing leaves your Mac.")
+      Image(systemName: "photo.stack").font(.system(size: 40, weight: .light))
+        .foregroundStyle(Theme.mutedForeground).accessibilityHidden(true)
+      Text("Add your first album").font(.title.weight(.semibold))
+      Text("An album is a folder of photos. Add as many as you like, then search each by description, find duplicates, clean up clutter and filter in steps. Drop folders anywhere in this window, or use + in the sidebar. Nothing leaves your Mac.")
         .font(.swissBody).foregroundStyle(Theme.mutedForeground)
-        .frame(maxWidth: 440, alignment: .leading)
-      Button("Open Folder…", action: studio.chooseFolder).buttonStyle(.swissPrimary)
+        .frame(maxWidth: 460, alignment: .leading)
+      Button("Add Album…", action: studio.chooseFolder).buttonStyle(.swissPrimary)
         .padding(.top, Theme.Space.s)
     }
     .padding(.top, Theme.Space.xl)

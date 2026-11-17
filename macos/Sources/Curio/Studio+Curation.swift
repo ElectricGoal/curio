@@ -1,9 +1,9 @@
 import CurioKit
 import SwiftUI
 
-/// Tags, smart albums and Clean Up: one pass of the model over the index labels them all.
+/// Tags, smart savedSearches and Clean Up: one pass of the model over the index labels them all.
 extension Studio {
-  var curationLabels: [CurationLabel] { Labels.tags + Labels.junk + albums.map(Labels.album) }
+  var curationLabels: [CurationLabel] { Labels.tags + Labels.junk + savedSearches.map(Labels.album) }
 
   static func junkGroups(_ curation: Curation?, in library: [Photo]) -> [(label: CurationLabel, photos: [Photo])] {
     guard let curation else { return [] }
@@ -21,7 +21,7 @@ extension Studio {
   // MARK: - Labelling
 
   /// Labels the folder in the background. Search keeps working if it fails,
-  /// so failures stay quiet: tags and albums are extras.
+  /// so failures stay quiet: tags and savedSearches are extras.
   func refreshCuration() {
     guard let folder, hasIndex, !indexNeedsRebuild else { return }
     curationGeneration += 1
@@ -42,7 +42,7 @@ extension Studio {
       refreshShownLabel()
       if let name = albumToOpen {
         albumToOpen = nil
-        showAlbum(name)
+        showSavedSearch(name)
       }
     }
   }
@@ -68,6 +68,15 @@ extension Studio {
       clearSearch()
       return
     }
+    // Without an index there is nothing to sort; say what is needed instead of waiting forever.
+    guard folder != nil else {
+      status = "Open a folder to see “\(label.name)”."
+      return
+    }
+    guard hasIndex else {
+      needsIndexPrompt = true
+      return
+    }
     guard let curation else {
       status = "Still sorting your images. This takes a moment the first time."
       if label.kind == .album { albumToOpen = label.name }
@@ -81,7 +90,7 @@ extension Studio {
     status = photos.isEmpty ? "No images match “\(label.name)” yet" : Format.images(photos.count)
   }
 
-  func showAlbum(_ name: String) { show(Labels.album(name)) }
+  func showSavedSearch(_ name: String) { show(Labels.album(name)) }
 
   /// Keeps a tag or album on screen up to date after re-labelling.
   private func refreshShownLabel() {
@@ -94,29 +103,33 @@ extension Studio {
   // MARK: - Albums
 
   /// Adds an album matching `words` and opens it once its photos are known.
-  func addAlbum(_ words: String) {
+  func addSavedSearch(_ words: String) {
     let name = words.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !name.isEmpty else { return }
-    if let existing = albums.first(where: { $0.caseInsensitiveCompare(name) == .orderedSame }) {
-      showAlbum(existing)
+    if let existing = savedSearches.first(where: { $0.caseInsensitiveCompare(name) == .orderedSame }) {
+      showSavedSearch(existing)
       return
     }
-    albums.append(name)
-    updatePreferences { $0.albums = albums }
+    savedSearches.append(name)
+    updatePreferences { $0.albums = savedSearches }
+    guard folder != nil, hasIndex else {
+      status = "Saved “\(name)”. It fills in once a folder is indexed."
+      return
+    }
     albumToOpen = name
     status = "Gathering photos for “\(name)”…"
     refreshCuration()
   }
 
   /// Keeps the current text search as an album.
-  func saveSearchAsAlbum() {
+  func saveSearch() {
     guard results?.kind == .text else { return }
-    addAlbum(query)
+    addSavedSearch(query)
   }
 
-  func removeAlbum(_ name: String) {
-    albums.removeAll { $0 == name }
-    updatePreferences { $0.albums = albums }
+  func removeSavedSearch(_ name: String) {
+    savedSearches.removeAll { $0 == name }
+    updatePreferences { $0.albums = savedSearches }
     if results?.label == Labels.album(name) { clearSearch() }
     status = "Removed the album “\(name)”. No photos were changed."
   }

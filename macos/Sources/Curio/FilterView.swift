@@ -95,6 +95,10 @@ struct FilterView: View {
     return VStack(alignment: .leading, spacing: Theme.Space.m) {
       HStack(spacing: Theme.Space.s) {
         Eyebrow(text: "Result")
+        if let traced = studio.filterTraced, let run {
+          let inResult = run.result.contains(traced)
+          TraceMark(text: inResult ? "In the result" : "Not in the result", passed: inResult)
+        }
         Spacer()
         if studio.isFiltering { ProgressView().controlSize(.small).accessibilityLabel("Filtering") }
       }
@@ -142,7 +146,7 @@ struct FilterView: View {
 
   private var preview: some View {
     let index = studio.filterSteps.firstIndex { $0.id == studio.filterFocus }
-    let title = index.map { "After step \($0 + 1)" } ?? "Result"
+    let title = index.map { "After #\(studio.filterSteps[$0].number)" } ?? "Result"
     return VStack(alignment: .leading, spacing: Theme.Space.m) {
       HStack(alignment: .firstTextBaseline, spacing: Theme.Space.m) {
         Eyebrow(text: studio.filterShowsRemoved ? "\(title) · removed" : title)
@@ -161,6 +165,7 @@ struct FilterView: View {
         .toggleStyle(.checkbox).font(.callout)
       }
       Hairline()
+      if let traced = studio.filterTraced { TracePanel(path: traced) }
       if let problem = studio.filterProblem {
         note("The chain could not run", problem)
       } else if studio.filterRun == nil {
@@ -172,8 +177,12 @@ struct FilterView: View {
             ? "Nothing was removed at this point." : "Try a looser strictness, or different words.")
       } else {
         let photos = studio.filterPreview
+        if studio.filterTraced == nil {
+          Text("Click a photo to trace its way through the chain.")
+            .font(.swissCaption).foregroundStyle(Theme.mutedForeground)
+        }
         PhotoGrid(photos: photos, thumbnailSize: min(studio.thumbnailSize, 160)) { photo in
-          studio.showPreview(of: photo, in: photos)
+          studio.traceFilter(photo)
         }.equatable()
       }
     }
@@ -236,7 +245,8 @@ private struct StepNode: View {
     let focused = studio.filterFocus == step.id
     VStack(alignment: .leading, spacing: Theme.Space.s) {
       HStack(spacing: Theme.Space.s) {
-        Eyebrow(text: "Step \(index + 1)")
+        Tag(text: "#\(step.number)", filled: focused)
+          .help("This step's number. It stays the same when steps move, so traces keep pointing here.")
         SegmentedChoice(
           options: FilterStep.Action.allCases,
           selection: Binding(
@@ -249,6 +259,12 @@ private struct StepNode: View {
           .disabled(isLast)
         IconButton(symbol: "xmark", label: "Delete step") { studio.removeStep(step.id) }
       }
+      // What happened to the traced photo here, on its own line so it never squeezes.
+      if let verdict = studio.filterTrace[step.id] {
+        TraceMark(verdict: verdict, action: step.action)
+      } else if studio.filterTraced != nil {
+        TraceMark(text: "Not reached", passed: nil)
+      }
       TextField(
         step.action == .keep ? "Images to keep — e.g. portrait photos" : "Images to remove — e.g. blurry photos",
         text: $text
@@ -258,7 +274,7 @@ private struct StepNode: View {
       .background(Theme.background)
       .overlay(Rectangle().strokeBorder(Theme.mutedForeground, lineWidth: Theme.hairline))
       .onChange(of: text) { studio.updateStep(step.id) { $0.text = text } }
-      .accessibilityLabel("Step \(index + 1) description")
+      .accessibilityLabel("Step #\(step.number) description")
       HStack(spacing: Theme.Space.s) {
         Menu {
           Picker(
@@ -285,31 +301,48 @@ private struct StepNode: View {
     .contentShape(Rectangle())
     .onTapGesture { studio.focusFilter(on: step.id) }
     .accessibilityElement(children: .contain)
-    .accessibilityLabel("Step \(index + 1), \(step.action.label)")
+    .accessibilityLabel("Step #\(step.number), \(step.action.label)")
     .accessibilityAddTraits(focused ? .isSelected : [])
   }
 
-  /// The choice to have the decision model look at every image for this step,
-  /// and what is left for it to do.
+  /// Which model answers this step: the album's search index matching the
+  /// description (instant), or a decision model looking at each image
+  /// (slower, more accurate). Then what is left for that model to do.
   @ViewBuilder private var careful: some View {
-    let model = studio.decisionModel
+    let alias = studio.decisionAlias(for: step)
+    let model = alias.flatMap { alias in studio.decisionModels.first { $0.alias == alias } }
     let unchecked = step.careful ? studio.uncheckedCount(at: index) : 0
     VStack(alignment: .leading, spacing: Theme.Space.xs) {
-      Toggle(
-        "Look at each image",
-        isOn: Binding(
-          get: { step.careful }, set: { value in studio.updateStep(step.id) { $0.careful = value } })
-      )
-      .toggleStyle(.checkbox).font(.callout)
-      .help("A second model looks at every image and answers this step. Much more accurate, and much slower: about a third of a second per image, once.")
-      if step.careful, step.isActive {
+      Menu {
+        Picker(
+          "Model",
+          selection: Binding(
+            get: { step.model }, set: { value in studio.updateStep(step.id) { $0.model = value } })
+        ) {
+          Text("Match description · \(studio.indexStatus?.modelName ?? "search index") — instant")
+            .tag(String?.none)
+          Text("Look with the default model · \(studio.decisionModel?.name ?? "chosen in Settings")")
+            .tag(String?.some(FilterStep.defaultModel))
+          ForEach(DecisionCatalog.entries, id: \.alias) { entry in
+            let installed = studio.decisionModels.first { $0.alias == entry.alias }?.installed ?? false
+            Text("Look with \(entry.name) — slower, more accurate\(installed ? "" : " (download needed)")")
+              .tag(String?.some(entry.alias))
+          }
+        }.pickerStyle(.inline).labelsHidden()
+      } label: {
+        Label(studio.modelName(for: step), systemImage: step.careful ? "eye" : "text.magnifyingglass")
+          .font(.callout)
+      }
+      .menuStyle(.borderlessButton).fixedSize()
+      .help("The model this step uses. Matching the description is instant; a model that looks at each image is much more accurate and takes about a third of a second per image, once.")
+      if let alias, step.isActive {
         if model?.installed != true {
           HStack(spacing: Theme.Space.s) {
-            Text("Needs \(model?.name ?? "a model") (\(Format.bytes(DecisionCatalog.entry(model?.alias ?? "")?.downloadSize ?? 0))).")
+            Text("Needs \(DecisionCatalog.entry(alias)?.name ?? alias) (\(Format.bytes(DecisionCatalog.entry(alias)?.downloadSize ?? 0))).")
               .font(.swissCaption).foregroundStyle(Theme.mutedForeground)
-            Button("Download") { if let model { studio.downloadModel(model.alias) } }
+            Button("Download") { studio.downloadModel(alias) }
               .buttonStyle(SwissButtonStyle(kind: .secondary, compact: true))
-              .disabled(model == nil || studio.activity != nil)
+              .disabled(studio.activity != nil)
           }
         } else if unchecked > 0 {
           HStack(spacing: Theme.Space.s) {
@@ -335,5 +368,125 @@ private struct StepNode: View {
     guard let counts = studio.filterCounts(at: index) else { return "…" }
     let left = counts.input - counts.dropped
     return "\(Format.count(counts.input)) → \(Format.count(left))  ·  \(Format.count(counts.dropped)) out"
+  }
+}
+
+// MARK: - Trace
+
+/// A small marker of what happened to the traced photo at one node: green
+/// tick, red cross or grey dash, always with words, never colour alone.
+private struct TraceMark: View {
+  let text: String
+  /// True passed, false removed here, nil not reached or skipped.
+  let passed: Bool?
+
+  init(text: String, passed: Bool?) {
+    self.text = text
+    self.passed = passed
+  }
+
+  init(verdict: FilterVerdict, action: FilterStep.Action) {
+    if case .inactive = verdict.evidence {
+      self.init(text: "Skipped", passed: nil)
+    } else if verdict.kept {
+      self.init(text: action == .keep ? "Kept" : "Passed", passed: true)
+    } else {
+      self.init(text: "Removed here", passed: false)
+    }
+  }
+
+  var body: some View {
+    let symbol = passed.map { $0 ? "checkmark.circle.fill" : "xmark.circle.fill" } ?? "minus.circle"
+    let colour: Color = passed.map { $0 ? .green : Theme.destructive } ?? Theme.mutedForeground
+    Label(text, systemImage: symbol)
+      .font(.caption.weight(.semibold)).lineLimit(1).fixedSize()
+      .foregroundStyle(colour)
+      .padding(.horizontal, 6).padding(.vertical, 2)
+      .background(colour.opacity(0.12), in: Capsule())
+      .accessibilityLabel("Traced photo: \(text)")
+  }
+}
+
+/// One photo's way through the chain, step by step: what each node decided
+/// and why, ending where it left or in the result. Click a row to show that node.
+private struct TracePanel: View {
+  @EnvironmentObject private var studio: Studio
+  let path: String
+
+  var body: some View {
+    let photo = studio.library.first { $0.path == path }
+    let trace = studio.filterRun?.trace(of: path) ?? []
+    VStack(alignment: .leading, spacing: Theme.Space.s) {
+      HStack(spacing: Theme.Space.s) {
+        Thumbnail(path: path).frame(width: 36, height: 36)
+          .clipShape(RoundedRectangle(cornerRadius: Theme.tagRadius))
+        VStack(alignment: .leading, spacing: 1) {
+          Eyebrow(text: "Trace")
+          Text(URL(fileURLWithPath: path).lastPathComponent).font(.callout.weight(.semibold))
+            .lineLimit(1).truncationMode(.middle)
+        }
+        Spacer()
+        if let photo {
+          Button("View Photo") { studio.showPreview(of: photo, in: studio.filterPreview.contains(photo) ? studio.filterPreview : [photo]) }
+            .buttonStyle(SwissButtonStyle(kind: .secondary, compact: true))
+        }
+        IconButton(symbol: "xmark", label: "Close the trace") { studio.filterTraced = nil }
+      }
+      if trace.isEmpty, studio.filterRun != nil {
+        Text(studio.filterSteps.isEmpty ? "The chain has no steps yet, so this photo is in the result." : "This photo is not in the chain any more.")
+          .font(.swissCaption).foregroundStyle(Theme.mutedForeground)
+      }
+      ForEach(trace, id: \.step) { verdict in
+        if let step = studio.filterSteps.first(where: { $0.id == verdict.step }) { row(verdict, step) }
+      }
+      if let run = studio.filterRun, !trace.isEmpty {
+        let inResult = run.result.contains(path)
+        TraceMark(text: inResult ? "Reached the result" : "Did not reach the result", passed: inResult)
+      }
+    }
+    .panel()
+  }
+
+  private func row(_ verdict: FilterVerdict, _ step: FilterStep) -> some View {
+    Button {
+      studio.focusFilter(on: step.id)
+    } label: {
+      HStack(alignment: .firstTextBaseline, spacing: Theme.Space.s) {
+        Text("#\(step.number)").font(.caption.weight(.semibold).monospacedDigit())
+          .frame(width: 28, alignment: .leading)
+        TraceMark(verdict: verdict, action: step.action)
+        VStack(alignment: .leading, spacing: 1) {
+          Text("\(step.action.label) “\(step.text.trimmingCharacters(in: .whitespaces))”")
+            .font(.callout).lineLimit(1).truncationMode(.tail)
+          Text(Self.reason(verdict, studio: studio))
+            .font(.swissCaption).foregroundStyle(Theme.mutedForeground)
+            .fixedSize(horizontal: false, vertical: true)
+        }
+        Spacer(minLength: 0)
+      }
+      .contentShape(Rectangle())
+    }
+    .buttonStyle(.plain)
+    .help("Show #\(step.number) in the chain")
+  }
+
+  /// Why the step decided as it did, in words and the numbers it compared.
+  static func reason(_ verdict: FilterVerdict, studio: Studio) -> String {
+    func name(_ alias: String) -> String {
+      studio.decisionModels.first { $0.alias == alias }?.name ?? DecisionCatalog.entry(alias)?.name ?? alias
+    }
+    func lead(_ value: Float) -> String { String(format: "%+.3f", value) }
+    let fits = verdict.matched ? "Fits the description" : "Does not fit the description"
+    switch verdict.evidence {
+    case .inactive:
+      return "The step has no words yet, so everything passes."
+    case .description(let value, let needed):
+      return "\(fits): \(lead(value)) over a plain photo, \(lead(needed)) needed (\(studio.indexStatus?.modelName ?? "search index"))."
+    case .model(let alias, let yes, let needed):
+      return "\(fits): \(name(alias)) is \(Int((yes * 100).rounded()))% sure, \(Int((needed * 100).rounded()))% needed."
+    case .notLookedAt(let alias, let unreadable, let value, let needed):
+      let why = unreadable ? "\(name(alias)) cannot read this file" : "\(name(alias)) has not looked yet"
+      return "\(why); by description for now: \(lead(value)) over a plain photo, \(lead(needed)) needed."
+    }
   }
 }

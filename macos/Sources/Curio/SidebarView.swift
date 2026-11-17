@@ -1,150 +1,121 @@
+import AppKit
 import CurioKit
 import SwiftUI
 
-/// The app's name beside the window buttons, then navigation, albums and recent folders.
+/// The app's name beside the window buttons, then the albums: the folders the
+/// user added, any number of them. Everything about one album is in its tabs.
 struct SidebarView: View {
   @EnvironmentObject private var studio: Studio
-  @State private var creatingAlbum = false
-  @State private var albumName = ""
 
   var body: some View {
     HStack(spacing: 0) {
-      VStack(alignment: .leading, spacing: Theme.Space.xl) {
+      VStack(alignment: .leading, spacing: 0) {
         // On the line of the window's close, minimise and zoom buttons, just past them.
-        Text("Curio").font(.headline)
+        // Just past macOS's window buttons, on their line.
+        Text("Curio").font(.system(size: 15, weight: .bold))
           .frame(height: Theme.titleRow)
           .padding(.leading, Theme.windowButtonsWidth)
+          .frame(maxWidth: .infinity, alignment: .leading)
+          .background(TitleBarArea())
           .accessibilityAddTraits(.isHeader)
-        VStack(spacing: 0) {
-          ForEach(Page.sidebar) { page in navigation(page) }
+        header
+        if studio.albumFolders.isEmpty {
+          empty
+        } else {
+          ScrollView {
+            VStack(spacing: 2) {
+              ForEach(studio.albumFolders, id: \.self) { url in AlbumRow(url: url) }
+            }
+            .padding(.horizontal, Theme.Space.s).padding(.bottom, Theme.Space.m)
+          }
+          .scrollIndicators(.never)
         }
-        ScrollView {
-          VStack(alignment: .leading, spacing: Theme.Space.xl) {
-            albumsSection
-            if !studio.recentFolders.isEmpty { recents }
-          }.frame(maxWidth: .infinity, alignment: .leading)
-        }
-        .scrollIndicators(.never)
+        Spacer(minLength: 0)
       }
       .frame(width: Theme.sidebarWidth, alignment: .leading)
       Rectangle().fill(Theme.border).frame(width: Theme.hairline).accessibilityHidden(true)
     }
     .background(Theme.surface)
-    .alert("New Album", isPresented: $creatingAlbum) {
-      TextField("Describe the photos", text: $albumName)
-      Button("Create") {
-        studio.addAlbum(albumName)
-        albumName = ""
-      }
-      Button("Cancel", role: .cancel) { albumName = "" }
-    } message: {
-      Text("For example “receipts”, “my dog at the beach” or “sunsets over water”. Curio gathers matching photos and keeps the album up to date as you add more.")
-    }
   }
 
-  /// Smart albums: saved descriptions that gather matching photos by themselves.
-  private var albumsSection: some View {
-    VStack(alignment: .leading, spacing: 0) {
-      HStack(spacing: 0) {
-        Eyebrow(text: "Albums")
-        Spacer()
-        IconButton(symbol: "plus", label: "New Album") { creatingAlbum = true }
-          .disabled(!studio.hasIndex)
-      }
-      .padding(.leading, Theme.Space.m).padding(.trailing, Theme.Space.s)
-      .padding(.bottom, Theme.Space.xs)
-      if studio.albums.isEmpty {
-        Text("Describe what you collect — “receipts”, “my dog” — and Curio fills the album for you.")
-          .font(.swissCaption).foregroundStyle(Theme.mutedForeground)
-          .fixedSize(horizontal: false, vertical: true).padding(.horizontal, Theme.Space.m)
-      }
-      ForEach(studio.albums, id: \.self) { name in
-        let label = Labels.album(name)
-        SidebarRow(
-          title: name, selected: studio.page == .library && studio.results?.label == label,
-          trailing: studio.curation.map { Format.count($0.count(for: label)) }, compact: true
-        ) {
-          studio.showAlbum(name)
-        }
-        .disabled(!studio.hasIndex)
-        .contextMenu {
-          Button("Remove Album") { studio.removeAlbum(name) }
-        }
-      }
+  private var header: some View {
+    HStack(spacing: 0) {
+      Eyebrow(text: "Albums")
+      Spacer()
+      IconButton(symbol: "plus", label: "Add Album… (⌘O)") { studio.chooseFolder() }
+        .disabled(studio.isFolderBusy)
     }
+    .padding(.leading, Theme.Space.m).padding(.trailing, Theme.Space.s)
+    .padding(.top, Theme.Space.l).padding(.bottom, Theme.Space.xs)
   }
 
-  private func navigation(_ page: Page) -> some View {
-    let badge: String? = {
-      switch page {
-      case .duplicates:
-        guard let extras = studio.duplicates?.extras.count, extras > 0 else { return nil }
-        return Format.count(extras)
-      case .cleanup:
-        let count = studio.junkCount
-        return count > 0 ? Format.count(count) : nil
-      case .library, .filter, .settings:
-        return nil
-      }
-    }()
-    return SidebarRow(title: page.title, selected: studio.page == page, trailing: badge) {
-      studio.page = page
+  private var empty: some View {
+    VStack(alignment: .leading, spacing: Theme.Space.s) {
+      Text("Add a folder of photos to make it an album. Add as many as you like.")
+        .font(.swissCaption).foregroundStyle(Theme.mutedForeground)
+        .fixedSize(horizontal: false, vertical: true)
+      Button("Add Album…") { studio.chooseFolder() }
+        .buttonStyle(SwissButtonStyle(kind: .secondary, compact: true))
     }
-  }
-
-  private var recents: some View {
-    VStack(alignment: .leading, spacing: 0) {
-      Eyebrow(text: "Recent").padding(.horizontal, Theme.Space.m).padding(.bottom, Theme.Space.s)
-      ForEach(studio.recentFolders.prefix(6), id: \.self) { url in
-        let current = url == studio.folder
-        SidebarRow(title: url.lastPathComponent, selected: current, compact: true) {
-          studio.open(url)
-        }
-        .disabled(studio.isFolderBusy && !current)
-        .help((url.path as NSString).abbreviatingWithTildeInPath)
-        .contextMenu {
-          Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([url]) }
-          Button("Remove from Recents") { studio.forget(url) }
-        }
-      }
-    }
+    .padding(.horizontal, Theme.Space.m).padding(.top, Theme.Space.xs)
   }
 }
 
-/// One line of the sidebar. The current row is marked by weight and a rule,
-/// not by colour alone.
-private struct SidebarRow: View {
-  let title: String
-  let selected: Bool
-  var trailing: String?
-  var compact = false
-  let action: () -> Void
-  @Environment(\.isEnabled) private var isEnabled
+/// One album: its folder's name and how many photos it holds. The open album
+/// sits in a soft card, and is marked by weight and a filled folder too, not
+/// only by colour.
+private struct AlbumRow: View {
+  @EnvironmentObject private var studio: Studio
+  let url: URL
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
   @State private var hovering = false
 
   var body: some View {
-    Button(action: action) {
-      HStack(spacing: 0) {
-        Rectangle().fill(selected ? Theme.ink : .clear).frame(width: Theme.rule)
-        Text(title).font(compact ? .callout : .body).fontWeight(selected ? .semibold : .regular)
+    let selected = url == studio.folder
+    let present = Studio.isDirectory(url)
+    let count = studio.albumCounts[url.path]
+    Button {
+      studio.open(url)
+    } label: {
+      HStack(spacing: Theme.Space.s) {
+        Image(systemName: present ? (selected ? "folder.fill" : "folder") : "externaldrive.badge.xmark")
+          .font(.system(size: Theme.Icon.medium))
+          .foregroundStyle(selected ? Theme.foreground : Theme.mutedForeground)
+          .frame(width: 18)
+        Text(url.lastPathComponent).font(.callout).fontWeight(selected ? .semibold : .regular)
           .lineLimit(1).truncationMode(.middle)
-          .padding(.leading, Theme.Space.m - Theme.rule)
         Spacer(minLength: Theme.Space.s)
-        if let trailing {
-          Text(trailing).font(.swissCaption.monospacedDigit())
-            .foregroundStyle(Theme.mutedForeground).padding(.trailing, Theme.Space.m)
+        if let count {
+          Text(Format.count(count)).font(.swissCaption.monospacedDigit())
+            .foregroundStyle(Theme.mutedForeground)
         }
       }
-      .frame(height: compact ? 28 : 34)
+      .padding(.horizontal, Theme.Space.s).frame(height: 30)
       .foregroundStyle(selected ? Theme.foreground : Theme.mutedForeground)
-      .background(hovering && isEnabled ? Theme.muted : .clear)
+      .background(
+        selected ? Theme.background : (hovering ? Theme.muted : .clear),
+        in: RoundedRectangle(cornerRadius: Theme.controlRadius))
+      .overlay(
+        RoundedRectangle(cornerRadius: Theme.controlRadius)
+          .strokeBorder(selected ? Theme.border : .clear, lineWidth: Theme.hairline))
       .contentShape(Rectangle())
-      .opacity(isEnabled ? 1 : 0.4)
+      .opacity(present ? 1 : 0.5)
     }
     .buttonStyle(.plain)
     .onHover { hovering = $0 }
     .animation(reduceMotion ? nil : .easeOut(duration: Theme.quick), value: hovering)
+    .disabled(studio.isFolderBusy && !selected)
+    .help(
+      (url.path as NSString).abbreviatingWithTildeInPath + (present ? "" : " — not connected"))
+    .accessibilityLabel(
+      "\(url.lastPathComponent)\(count.map { ", \(Format.images($0))" } ?? "")\(present ? "" : ", not connected")"
+    )
     .accessibilityAddTraits(selected ? .isSelected : [])
+    .contextMenu {
+      Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([url]) }
+        .disabled(!present)
+      Divider()
+      Button("Remove from Curio") { studio.removeAlbumFolder(url) }
+    }
   }
 }

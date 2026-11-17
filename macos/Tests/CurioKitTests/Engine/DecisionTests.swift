@@ -406,6 +406,19 @@ final class DecisionLibraryTests: XCTestCase {
     }
   }
 
+  /// Two builds of one model differ only in how they are packed, so each says which it is.
+  func testEveryPublishedModelNamesItsQuantization() throws {
+    for entry in DecisionCatalog.entries {
+      let address = entry.source.absoluteString
+      let match = try XCTUnwrap(
+        address.range(of: #"MLX-\d+bit"#, options: .regularExpression), entry.alias)
+      let bits = address[match].filter(\.isNumber)
+      XCTAssertTrue(entry.name.hasSuffix("(\(bits)-bit)"), "\(entry.alias): \(entry.name)")
+      XCTAssertTrue(entry.summary.contains("quantized to \(bits) bits"), entry.alias)
+      XCTAssertTrue(entry.summary.contains("MLX"), entry.alias)
+    }
+  }
+
   /// The real thing, from Liquid AI's repository: gigabytes, so only on request
   /// (`CURIO_D1_DOWNLOAD=1` for the default model, or a model's alias). Proves
   /// the pinned address and checksums are right.

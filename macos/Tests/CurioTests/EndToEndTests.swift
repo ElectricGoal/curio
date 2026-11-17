@@ -187,7 +187,7 @@ final class EndToEndTests: XCTestCase {
     let root = try projectRoot()
     let weights = root.appendingPathComponent("models/mlx/d1-2b/model.safetensors")
     try XCTSkipUnless(
-      FileManager.default.fileExists(atPath: weights.path), "download Liquid d1-2B in Settings first")
+      FileManager.default.fileExists(atPath: weights.path), "download Liquid d1-2B (8-bit) in Settings first")
     let folder = try makePhotoFolder()
     let studio = Studio(dataRoot: root, preferencesURL: workspace.appendingPathComponent("preferences.json"))
     show(studio)

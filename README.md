@@ -47,7 +47,7 @@ The app itself is about 6 MB. On first launch Curio asks which search model to d
 - Every step shows how many images went in and how many it took out; click a step to preview what is left after it, or what it removed. **Strictness** (Loose, Balanced, Strict) sets how clearly an image must match.
 - Choose a folder, or make one with **New Folder…**, and **Copy** or **Move** the result there. Nothing is overwritten: a clashing name gets a number. The chain is remembered for next time.
 - Short, concrete descriptions work best. Image quality ("blurry", "artifacts") is the model's weakest area, so check those steps in the preview.
-- For a step that has to be right, tick **Look at each image**. A second model, [Liquid d1-2B](https://huggingface.co/LiquidAI/d1-2B), then looks at every image reaching that step and answers it with yes or no, instead of the step being matched by description. On 83 mixed test images it kept every real "photo of people" where matching by description found 4 of 24, and it did not mistake logos and icons for "a product on a white background".
+- For a step that has to be right, tick **Look at each image**. A second model, [Liquid d1-2B](https://huggingface.co/LiquidAI/d1-2B) (run from Liquid AI's MLX builds, quantized to 8 or 4 bits; see [Models](#models)), then looks at every image reaching that step and answers it with yes or no, instead of the step being matched by description. On 83 mixed test images it kept every real "photo of people" where matching by description found 4 of 24, and it did not mistake logos and icons for "a product on a white background".
 - Looking is slow — about a third of a second per image on an M4, so a few minutes per thousand — and starts only when you press **Look Now**. You can pause at any time: each answer is kept with the folder, so an image is only ever looked at once per step.
 
 ### Index once, stay current
@@ -73,8 +73,14 @@ The app itself is about 6 MB. On first launch Curio asks which search model to d
 - Uses **MobileCLIP-S4** by default for the best search quality. The lighter, faster **OpenAI CLIP ViT-B/32** is available too; download, switch or remove either in **Settings** (the gear at the right of the footer, or ⌘,).
 - Settings says where each model is downloaded from, with a link to the page listing its files.
 - Each folder remembers the model it was indexed with. Switching models only affects new indexes, or a **Rebuild Index** from the ⋯ menu; cancelling a rebuild keeps the old index.
-- **Liquid d1-2B**, for careful filter steps, is optional: about 2.2 GB, downloaded in Settings straight from [Liquid AI's own repository](https://huggingface.co/LiquidAI/d1-2B-MLX-8bit) and checked file by file. It uses about 3.3 GB of memory while it runs and is released when idle.
-- **Liquid d1-2B (4-bit)** is the same model packed smaller, for Macs with less memory: about 1.4 GB from [its own repository](https://huggingface.co/LiquidAI/d1-2B-MLX-4bit), about 2.2 GB of memory, the same speed. On 83 test images and 7 questions it gave the same answer as the full version 566 times out of 581; every difference was an image the full version was itself unsure about. One of the two is enough. Settings chooses which one careful steps use, and each keeps its own answers.
+- For careful filter steps there are two optional builds of Liquid AI's d1-2B, both in MLX format and downloaded in Settings straight from Liquid AI's repositories, each at one fixed revision and checked file by file:
+
+  | In Settings | Exact model | Quantization | Download | Memory while running |
+  |---|---|---|---|---|
+  | **Liquid d1-2B (8-bit)** | [`LiquidAI/d1-2B-MLX-8bit`](https://huggingface.co/LiquidAI/d1-2B-MLX-8bit) | 8-bit | about 2.2 GB | about 3.3 GB |
+  | **Liquid d1-2B (4-bit)** | [`LiquidAI/d1-2B-MLX-4bit`](https://huggingface.co/LiquidAI/d1-2B-MLX-4bit) | 4-bit | about 1.4 GB | about 2.2 GB |
+
+- Both run at the same speed and are released from memory when idle. The 8-bit build is the more accurate; the 4-bit build is for Macs with less memory. On 83 test images and 7 questions the two gave the same answer 566 times out of 581, and every difference was an image the 8-bit build was itself unsure about. One of the two is enough. Settings chooses which one careful steps use, and each keeps its own answers.
 
 ### Private and lightweight
 
@@ -104,7 +110,7 @@ bash scripts/launch.sh           # builds and opens dist/Curio.app
 
 The build is plain `swift build`. MLX's GPU shaders are the one thing that cannot compile, so `scripts/build-mlx-shaders.sh` compiles them into `mlx.metallib`, which the build scripts place inside the app.
 
-The decision model runs on Swift code in `macos/Sources/CurioKit/Engine/Decision`, written from [mlx-vlm](https://github.com/Blaizzy/mlx-vlm)'s implementation. To check it against that reference, download Liquid d1-2B in the app's Settings, then (for the 4-bit version: `D1_REPO=LiquidAI/d1-2B-MLX-4bit bash scripts/d1-reference.sh d1-2b-4bit`):
+The decision model runs on Swift code in `macos/Sources/CurioKit/Engine/Decision`, written from [mlx-vlm](https://github.com/Blaizzy/mlx-vlm)'s implementation. To check it against that reference, download Liquid d1-2B (8-bit) in the app's Settings, then (for the 4-bit build: `D1_REPO=LiquidAI/d1-2B-MLX-4bit bash scripts/d1-reference.sh d1-2b-4bit`):
 
 ```bash
 bash scripts/d1-reference.sh     # writes the reference's tokens, tensors and answers

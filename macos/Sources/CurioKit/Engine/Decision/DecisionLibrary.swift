@@ -20,9 +20,9 @@ public enum DecisionCatalog {
   public static let defaultAlias = "d1-2b"
   public static let entries: [Entry] = [
     Entry(
-      alias: "d1-2b", name: "Liquid d1-2B",
+      alias: "d1-2b", name: "Liquid d1-2B (8-bit)",
       summary:
-        "Looks at each image and answers a filter step with yes or no. Much more accurate than matching by description, and much slower: about a third of a second per image. About 2.2 GB to download, and about 3.3 GB of memory while it runs.",
+        "Liquid AI's d1-2B in MLX format, quantized to 8 bits. Looks at each image and answers a filter step with yes or no. Much more accurate than matching by description, and much slower: about a third of a second per image. About 2.2 GB to download, and about 3.3 GB of memory while it runs.",
       source: URL(
         string:
           "https://huggingface.co/LiquidAI/d1-2B-MLX-8bit/resolve/3247d0483b11e5da31fa10e7979c23252fbe3580"
@@ -47,7 +47,7 @@ public enum DecisionCatalog {
     Entry(
       alias: "d1-2b-4bit", name: "Liquid d1-2B (4-bit)",
       summary:
-        "The same model packed smaller, for Macs with less memory: about 1.4 GB to download and about 2.2 GB of memory while it runs, at the same speed. Its answers are nearly the same; an image the full version is unsure about can go the other way.",
+        "Liquid AI's d1-2B in MLX format, quantized to 4 bits: the same model packed smaller, for Macs with less memory. About 1.4 GB to download and about 2.2 GB of memory while it runs, at the same speed. Its answers are nearly the same; an image the 8-bit version is unsure about can go the other way.",
       source: URL(
         string:
           "https://huggingface.co/LiquidAI/d1-2B-MLX-4bit/resolve/afeb4a3141bf4040cbc312d0ccc14eac719024c5"

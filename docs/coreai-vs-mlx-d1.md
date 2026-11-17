@@ -26,9 +26,25 @@ Measured 2026-11-17 on an Apple M2 Pro with 16 GB, macOS 27.2, Xcode 27.2, relea
 
 **Answers:** close but not identical. Both are 4-bit, but quantized differently: the MLX checkpoint is Liquid's affine quantization in groups of 64; the Core AI model re-quantizes the same weights with coreai-opt (symmetric, blocks of 32, Apple's macOS "4bit" preset). Quantizing twice moves some answers: two of 30 pictures land on the other side of 0.5. Exporting from the original bfloat16 weights would avoid the double quantization.
 
+## 8-bit (the app's default decision model)
+
+The same benchmark with Liquid's 8-bit MLX checkpoint (`d1-2b`) and the same weights re-quantized to int8 for Core AI (blocks of 32, the 4-bit preset's layout with int8; Apple has no 8-bit weight preset).
+
+| | MLX 8-bit (shipping default) | Core AI int8 |
+|---|---|---|
+| **Time per image** (median of 30) | **0.186–0.188 s** | 0.293 s (57% slower) |
+| Load, model cached | 1.15 s | 1.04 s |
+| Load, first ever | — | 8.8 s (compiling for this GPU, then cached) |
+| **GPU memory in use** (driver counter, increase) | +3,344 to +3,440 MB | **+2,857 MB** (about −0.5 GB, −15%) |
+| Process footprint, peak | 3,108 MB | 311 MB, plus 1.9 GB of model file mapped read-only |
+| Model on disk | 2.22 GB | 1.9 GB |
+| Same yes/no as MLX at 0.5 | — | **30 of 30** (P(yes) differs by 0.002 on average, 0.011 at most) |
+
+At 8 bits re-quantizing costs almost nothing: every answer agrees with MLX. But the speed gap widens. MLX takes the same time at 8 bits as at 4 (0.186 s against 0.184 s); Core AI slows from 0.250 s to 0.293 s, as if it were limited by reading weights, where MLX is not. The memory saving shrinks to about half a gigabyte.
+
 ## Verdict
 
-Not worth switching yet. MLX answers 1.36× faster, handles any picture shape and up to 16 questions per pass, and runs on macOS 14. Core AI saves about 0.7 GB of GPU memory, which matters on 8 GB Macs, but needs macOS 27, a fixed picture grid and row length per exported graph (or one graph per shape), and loses a little accuracy through re-quantization. Worth revisiting: export from the bfloat16 checkpoint, apply Apple's GPU authoring patterns, and export a few picture shapes as separate functions.
+Not worth switching yet. MLX answers 1.36× faster at 4 bits and 1.57× faster at 8 bits, handles any picture shape and up to 16 questions per pass, and runs on macOS 14. Core AI saves about 0.7 GB of GPU memory, which matters on 8 GB Macs, but needs macOS 27, a fixed picture grid and row length per exported graph (or one graph per shape), and loses a little accuracy through re-quantization. Worth revisiting: export from the bfloat16 checkpoint, apply Apple's GPU authoring patterns, and export a few picture shapes as separate functions.
 
 ## How it was built
 
@@ -47,7 +63,7 @@ bash scripts/build-mlx-shaders.sh
 CURIO_D1_DUMP=/tmp/d1dump CURIO_D1_IMAGE=photo.jpg swift test --package-path macos --filter D1CoreAITests/testDumpInputsForTheCoreAIExport
 # 4. Export (checks the PyTorch mirror against MLX first)
 cd scripts/d1_coreai && <coreai-models>/.venv/bin/python export.py \
-  --checkpoint ../../models/mlx/d1-2b-4bit --inputs /tmp/d1dump/inputs.json --out ../../models/coreai/d1-2b-4bit
+  --checkpoint ../../models/mlx/d1-2b-4bit --inputs /tmp/d1dump/inputs.json --out ../../models/coreai/d1-2b-4bit  # 8-bit: --compression 8bit, checkpoint d1-2b, CURIO_D1_ALIAS=d1-2b
 # 5. Benchmark, one runtime per process (CURIO_D1_COLD=1 clears Core AI's compiled-model cache first)
 for backend in mlx coreai; do
   CURIO_D1_BACKEND=$backend CURIO_D1_BENCH=<folder of square pictures> CURIO_D1_RESULT=results.jsonl \

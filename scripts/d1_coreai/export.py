@@ -1,7 +1,7 @@
 """Export the d1 decision model to Core AI (.aimodel), checked against MLX.
 
   uv run (in Apple's coreai-models checkout) python export.py \\
-      --checkpoint models/mlx/d1-2b-4bit --inputs <dump>/inputs.json --out <dir> [--compression 4bit|none]
+      --checkpoint models/mlx/d1-2b-4bit --inputs <dump>/inputs.json --out <dir> [--compression 4bit|8bit|none]
 
 `inputs.json` is what the app builds for one picture and question, with MLX's
 scores for it (CURIO_D1_DUMP, see D1CoreAITests). The graph is traced for that
@@ -67,11 +67,13 @@ def quantize(model: D1, inputs: dict, compression: str) -> torch.nn.Module:
     from coreai_opt.quantization import Quantizer, QuantizerConfig
 
     # Apple's macOS "4bit" preset: int4, symmetric with clipping, per-block of 32
-    # along the input axis. Here on linear layers and the embedding table, which is
-    # what the MLX checkpoint packs; norms and the small depthwise convolutions stay float16.
-    int4 = {"weight": {"dtype": "int4", "qscheme": "symmetric_with_clipping",
+    # along the input axis; "8bit" is the same layout with int8 (Apple has no 8-bit
+    # weight preset). Here on linear layers and the embedding table, which is what the
+    # MLX checkpoint packs; norms and the small depthwise convolutions stay float16.
+    dtype = {"4bit": "int4", "8bit": "int8"}[compression]
+    spec = {"weight": {"dtype": dtype, "qscheme": "symmetric_with_clipping",
                        "granularity": {"type": "per_block", "block_size": 32, "axis": 1}}}
-    weight_only = {"op_state_spec": int4, "op_input_spec": None, "op_output_spec": None}
+    weight_only = {"op_state_spec": spec, "op_input_spec": None, "op_output_spec": None}
     config = QuantizerConfig.from_dict({"quantization_config": {
         "execution_mode": "eager",
         "global_config": None,
@@ -108,7 +110,7 @@ def main() -> None:
     parser.add_argument("--checkpoint", type=Path, required=True)
     parser.add_argument("--inputs", type=Path, required=True)
     parser.add_argument("--out", type=Path, required=True)
-    parser.add_argument("--compression", choices=["4bit", "none"], default="4bit")
+    parser.add_argument("--compression", choices=["4bit", "8bit", "none"], default="4bit")
     args = parser.parse_args()
 
     dump = json.loads(args.inputs.read_text())
